@@ -6,7 +6,9 @@ use tokio::sync::broadcast;
 
 mod models;
 mod routes;
-mod broadcast;
+mod handlers {
+    pub mod my_broadcast;
+}
 
 #[tokio::main]
 async fn main() {
@@ -20,7 +22,7 @@ async fn main() {
     let app: Router = routes::create_routes(tx);
 
     // 서버 시작
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Server listening on {}", addr);
 
     axum::Server::bind(&addr)

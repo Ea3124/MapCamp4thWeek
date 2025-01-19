@@ -1,16 +1,20 @@
-// server/src/routes.rs
-
-use axum::{Router, routing::post};
+use axum::{Router, routing::{post, get}, extract::Extension, Json};
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 
-use crate::{
-    broadcast::handle_broadcast,
-    models::Block
-};
+use crate::models::Block;
+use crate::handlers::my_broadcast;
 
 pub fn create_routes(tx: Arc<Sender<Block>>) -> Router {
     Router::new()
-        .route("/broadcast", post(handle_broadcast))
-        // 다른 라우트가 필요하다면 .route(...)를 추가
+        .route(
+            "/broadcast",
+            post({
+                let tx = tx.clone();
+                move |Json(block): Json<Block>| {
+                    my_broadcast::handle_broadcast(Json(block), Extension(tx.clone()))
+                }
+            }),
+        )
+        .route("/",get(|| async { "Hello, World!" }))
 }
