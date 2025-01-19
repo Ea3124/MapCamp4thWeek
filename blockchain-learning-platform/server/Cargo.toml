@@ -1,0 +1,23 @@
+[package]
+name = "blockchain-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Axum, Tokio 등 서버에 필요한 라이브러리
+axum = "0.6"
+tokio = { version = "1.28", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Broadcast, 웹소켓 등 사용할 수도 있음
+# 웹소켓: tokio-tungstenite = "0.18"
+# SSE: axum-extra 등
+tower = "0.4"
+tower-http = "0.4"
+hyper = "0.14"
+# 채널, 동시성
+tokio-util = "0.7"
+
+# 필요시
+anyhow = "1.0"
+thiserror = "1.0"

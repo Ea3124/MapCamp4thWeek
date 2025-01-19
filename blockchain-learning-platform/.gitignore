@@ -1,0 +1,20 @@
+# Rust build
+/target
+**/*.rs.bk
+**/*.dSYM
+*.log
+
+# Cargo locks
+/server/Cargo.lock
+/client/Cargo.lock
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# RocksDB generated files
+*.sst
+*.ldb
+MANIFEST-*
+LOCK
+LOG
