@@ -1,20 +1,44 @@
-use axum::{Router, routing::{post, get}, extract::Extension, Json};
+use axum::{
+    Router, 
+    routing::{post, get}, 
+    extract::Extension, 
+    Json
+};
 use std::sync::Arc;
-use tokio::sync::broadcast::Sender;
+use tokio::sync::{broadcast::Sender, mpsc::Sender as MpscSender};
 
-use crate::models::Block;
+use crate::models::{Block, ValidationResult};
 use crate::handlers::my_broadcast;
 
-pub fn create_routes(tx: Arc<Sender<Block>>) -> Router {
+pub fn create_routes(
+    tx: Arc<Sender<Block>>,
+    validation_sender: MpscSender<ValidationResult>
+) -> Router {
     Router::new()
         .route(
-            "/broadcast",
+            "/broadcast_problem",
+            get(
+                    my_broadcast::broadcast_problem
+            ),
+        )
+        .layer(Extension(tx.clone()))
+        // 블록 제출
+        .route(
+            "/submit_block",
             post({
                 let tx = tx.clone();
-                move |Json(block): Json<Block>| {
-                    my_broadcast::handle_broadcast(Json(block), Extension(tx.clone()))
+                let validation_sender = validation_sender.clone();
+                move |Json(block): Json<Block>| async move {
+                    my_broadcast::handle_block_submission(
+                        Json(block),
+                        Extension(tx.clone()),
+                        Extension(validation_sender.clone()),
+                    )
+                    .await;
+                    "Block submitted"
                 }
             }),
         )
+        // 기본 경로
         .route("/",get(|| async { "Hello, World!" }))
 }

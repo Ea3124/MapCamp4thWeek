@@ -17,6 +17,7 @@ tower-http = "0.4"
 hyper = "0.14"
 # 채널, 동시성
 tokio-util = "0.7"
+rand = "0.8" # 또는 최신 버전
 
 # 필요시
 anyhow = "1.0"
