@@ -1,61 +1,84 @@
-// client/src/main.rs
+// main.rs
 
-use std::error::Error;
-use crate::{
-    blockchain::{Block, create_block, validate_block},
-    db::{init_db, store_block, get_last_block},
-    network::broadcast_block,
-    utils::{log_info, log_error}
+// Imports: 뷰 함수들과 라이브러리리
+mod views;
+use views::problem_solving::view_problem_solving;
+use views::chain_info::view_chain_info;
+use views::transaction_verification::view_transaction_verification;
+
+use iced::{
+    theme::Theme,
+    widget::{container},
+    Element, Length,
+    application,
 };
+use iced_aw::{TabLabel, Tabs};
 
-mod blockchain;
-mod db;
-mod network;
-mod utils;
+// 구조체 선언
+#[derive(Debug, Clone)]
+enum Message {
+    TabSelected(usize),
+    SubmitSolution,
+    InputChanged(usize, usize, String), // (행, 열, 새로운 값)
+}
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    // 1. RocksDB 초기화
-    let db = init_db("client_db")?;
+#[derive(Default)]
+struct BlockchainClientGUI {
+    active_tab: usize,
+    solution_input: [[String; 4]; 4], // 4x4 정답 입력 상태
+}
 
-    // 2. 마지막 블록 조회 (최초 실행 시 없을 수도 있으므로 None 처리)
-    let last_block = match get_last_block(&db) {
-        Some(b) => b,
-        None => {
-            // 초기 제네시스 블록 생성 (단순 예시)
-            let genesis_block = Block {
-                index: 0,
-                timestamp: "2025-01-20T00:00:00Z".to_string(),
-                data: "Genesis Block".to_string(),
-                prev_hash: "0".to_string(),
-                hash: "GENESIS_HASH".to_string(),
-            };
-            store_block(&db, &genesis_block)?;
-            genesis_block
+// 업데이트: 탭 전환
+fn update(state: &mut BlockchainClientGUI, msg: Message) {
+    match msg {
+        Message::TabSelected(i) => {
+            state.active_tab = i;
         }
-    };
-
-    // 3. 새 블록 생성
-    let data = "My new block data";
-    let new_block = create_block(&last_block, data);
-
-    // 4. 블록 검증
-    if !validate_block(&new_block, &last_block) {
-        log_error("Invalid block! Aborting.");
-        return Ok(());
+        Message::SubmitSolution => {
+            println!("Solution submitted!");
+        }
+        Message::InputChanged(row, col, value) => {
+            state.solution_input[row][col] = value;
+        }
     }
+}
 
-    // 5. 로컬 DB에 저장
-    store_block(&db, &new_block)?;
-    log_info(&format!("Stored block #{}", new_block.index));
+// 메인 뷰
+fn view<'a>(state: &'a BlockchainClientGUI) -> Element<'a, Message> {
+    println!("현재 활성 탭: {}", state.active_tab); // debug
+    let tabs = Tabs::new(Message::TabSelected)
+        .push(
+            0,
+            TabLabel::Text("코인 채굴하기".to_owned()),
+            view_problem_solving(state),
+        )
+        .push(
+            1,
+            TabLabel::Text("로컬 체인 정보 & 거래 내역".to_owned()),
+            view_chain_info(),
+        )
+        .push(
+            2,
+            TabLabel::Text("블록 검증".to_owned()),
+            view_transaction_verification(),
+        )
+        .set_active_tab(&state.active_tab);
 
-    // 6. 서버로 브로드캐스트
-    let server_url = "http://127.0.0.1:3000";
-    broadcast_block(server_url, &new_block).await?;
-    log_info("Block broadcasted successfully");
+    container(tabs)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into() 
+}
 
-    // (선택) 서버 메시지 수신 (웹소켓/SSE 등)
-    // network::start_ws_listener("ws://127.0.0.1:3000/subscribe").await?;
 
-    Ok(())
+fn main() -> iced::Result {
+    application(
+        "블록체인 클라이언트", // 타이틀
+        update,                // 업데이트 함수
+        view,                  // 뷰 함수
+    )
+    .theme(|_| Theme::Dark)     // 테마 설정 (선택 사항)
+    .run()
 }

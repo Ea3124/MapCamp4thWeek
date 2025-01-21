@@ -4,6 +4,8 @@
 **/*.dSYM
 *.log
 
+/client/target
+
 # Cargo locks
 /server/Cargo.lock
 /client/Cargo.lock
