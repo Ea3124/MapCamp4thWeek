@@ -1,9 +1,10 @@
 // client/src/network.rs
 
-use crate::blockchain::Block;
+use crate::Block;
 use reqwest::Client;
 use serde::Serialize;
 use std::error::Error;
+
 
 // 서버와 동일하게 맞춰줄 임시 구조체 (서버의 Block 구조체에 매칭)
 #[derive(Serialize)]

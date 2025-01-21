@@ -39,6 +39,8 @@ pub async fn handle_block_submission(
     Extension(tx): Extension<Arc<Sender<Block>>>,
     Extension(validation_sender): Extension<MpscSender<ValidationResult>>,
 ) -> impl IntoResponse {
+    println!("Received block in handle_block_submission: {:?}", block);
+
     // 블록 브로드캐스트
     if let Err(e) = tx.send(block.clone()) {
         eprintln!("Failed to broadcast block: {}", e);

@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 pub struct Block {
     pub index: u64,
     pub timestamp: String,
-    pub problem: Problem,        // 블록에 포함된 문제
+    // pub problem: Problem,        // 블록에 포함된 문제
     pub solution: Vec<Vec<u32>>, // 노드가 제출한 풀이
     pub hash: String,            // 현재 블록의 해시
     pub prev_hash: String,       // 이전 블록의 해시

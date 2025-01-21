@@ -3,6 +3,7 @@
 // Imports
 mod views;
 mod blockchain;
+mod network;
 
 use views::problem_solving::view_problem_solving;
 use views::chain_info::view_chain_info;
@@ -151,9 +152,80 @@ impl Application for BlockchainClientGUI {
     }
 
     // 메시지 처리 (상태 업데이트)
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
-        update(self, message);
-        Command::none()
+    fn update(&mut self, msg: Message) -> Command<Message> {
+        match msg {
+            Message::TabSelected(i) => {
+                self.active_tab = i;
+                Command::none()
+            }
+            Message::SubmitSolution => {
+                println!("Solution submitted! Now sending to server...");
+    
+                // 1) 4x4 string matrix -> Vec<Vec<u32>> 변환 (파싱)
+                let parsed_solution = self
+                    .solution_input
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .filter_map(|val| val.parse::<u32>().ok()) // 파싱 실패하면 버림
+                            .collect::<Vec<u32>>()
+                    })
+                    .collect::<Vec<Vec<u32>>>();
+    
+                // 2) 서버로 보낼 BlockForServer 구성 (임시 값들로 예시)
+                use crate::network::BlockForServer;
+                let block_data = BlockForServer {
+                    index: 0,
+                    timestamp: "temp-timestamp".to_string(),
+                    solution: parsed_solution,
+                    hash: "temp-hash".to_string(),
+                    prev_hash: "temp-prev-hash".to_string(),
+                    node_id: "client-node-id".to_string(),
+                };
+    
+                // 3) 비동기 전송 - Command::perform 사용
+                //    http://143.248.196.38:3000 등 실제 서버 주소로 교체
+                let server_url = "http://143.248.196.38:3000";
+                let future = async move {
+                    match crate::network::submit_solution_block(server_url, &block_data).await {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e.to_string()),
+                    }
+                };
+    
+                // 이때 즉시 return을 하지 않고,
+                // Command::perform(...)를 반환하여 iced가 비동기 처리 후 메시지를 다시 보냄
+                Command::perform(future, Message::SubmitSolutionFinished)
+            }
+            Message::SubmitSolutionFinished(result) => {
+                match result {
+                    Ok(()) => println!("Server accepted the solution block successfully!"),
+                    Err(err_msg) => eprintln!("Error submitting solution block: {}", err_msg),
+                }
+                Command::none()
+            }
+            Message::InputChanged(row, col, value) => {
+                self.solution_input[row][col] = value;
+                Command::none()
+            }
+            Message::LoadChainInfo => {
+                // DB에서 체인 정보 로드
+                self.blocks = self.db.load_all_blocks();
+                Command::none()
+            }
+            // 테스트
+            Message::ResetDB => {
+                // 자유 함수이므로 self가 아닌 self
+                self.reset_db();
+                println!("DB has been reset!");
+                Command::none()
+            }
+            Message::AddRandomBlock => {
+                self.add_random_block();
+                println!("Random block added!");
+                Command::none()
+            }
+        }
     }
 
     // 뷰(화면) 구성
@@ -170,75 +242,7 @@ impl Application for BlockchainClientGUI {
 //---------------------//
 // 업데이트 로직 함수  //
 //---------------------//
-fn update(state: &mut BlockchainClientGUI, msg: Message) {
-    match msg {
-        Message::TabSelected(i) => {
-            state.active_tab = i;
-        }
-        Message::SubmitSolution => {
-            println!("Solution submitted! Now sending to server...");
 
-            // 1) 4x4 string matrix -> Vec<Vec<u32>> 변환 (파싱)
-            let parsed_solution = state
-                .solution_input
-                .iter()
-                .map(|row| {
-                    row.iter()
-                        .filter_map(|val| val.parse::<u32>().ok()) // 파싱 실패하면 버림
-                        .collect::<Vec<u32>>()
-                })
-                .collect::<Vec<Vec<u32>>>();
-
-            // 2) 서버로 보낼 BlockForServer 구성 (임시 값들로 예시)
-            use crate::network::BlockForServer;
-            let block_data = BlockForServer {
-                index: 0,
-                timestamp: "temp-timestamp".to_string(),
-                solution: parsed_solution,
-                hash: "temp-hash".to_string(),
-                prev_hash: "temp-prev-hash".to_string(),
-                node_id: "client-node-id".to_string(),
-            };
-
-            // 3) 비동기 전송 - Command::perform 사용
-            //    http://143.248.196.38:3000 등 실제 서버 주소로 교체
-            let server_url = "http://143.248.196.38:3000";
-            let future = async move {
-                match crate::network::submit_solution_block(server_url, &block_data).await {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e.to_string()),
-                }
-            };
-
-            // 이때 즉시 return을 하지 않고,
-            // Command::perform(...)를 반환하여 iced가 비동기 처리 후 메시지를 다시 보냄
-            iced::Command::perform(future, Message::SubmitSolutionFinished);
-        }
-        Message::SubmitSolutionFinished(result) => {
-            match result {
-                Ok(()) => println!("Server accepted the solution block successfully!"),
-                Err(err_msg) => eprintln!("Error submitting solution block: {}", err_msg),
-            }
-        }
-        Message::InputChanged(row, col, value) => {
-            state.solution_input[row][col] = value;
-        }
-        Message::LoadChainInfo => {
-            // DB에서 체인 정보 로드
-            state.blocks = state.db.load_all_blocks();
-        }
-        // 테스트
-        Message::ResetDB => {
-            // 자유 함수이므로 self가 아닌 state
-            state.reset_db();
-            println!("DB has been reset!");
-        }
-        Message::AddRandomBlock => {
-            state.add_random_block();
-            println!("Random block added!");
-        }
-    }
-}
 
 //---------------//
 // 메인 뷰 함수  //

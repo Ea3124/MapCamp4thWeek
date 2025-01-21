@@ -20,3 +20,6 @@ Thumbs.db
 MANIFEST-*
 LOCK
 LOG
+
+
+/blockchain_db/*
