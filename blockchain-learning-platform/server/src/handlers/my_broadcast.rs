@@ -13,6 +13,10 @@ use crate::models::{Block, Problem, ValidationResult, Transaction};
 use rand::Rng;
 use std::collections::HashMap;
 use std::time::Duration;
+use std::convert::Infallible;
+use axum::response::sse::{Sse, Event};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 // =============== 문제 브로드캐스트 ===============
 pub async fn broadcast_problem(
@@ -84,6 +88,34 @@ pub async fn handle_transaction(
 
     (StatusCode::OK, "Transaction accepted")
 }
+
+pub async fn stream_blocks_sse(
+    Extension(tx): Extension<Arc<Sender<Block>>>,
+) -> impl IntoResponse {
+    let rx = tx.subscribe();
+    let stream = BroadcastStream::new(rx);
+
+    // 1) map -> 아이템을 바로 동기 변환
+    // 2) 반환 타입: Result<Event, Infallible> 
+    //    (에러가 발생해도 SSE 내부에서 문자열로 처리, 진짜 Rust Err로는 안 넘김)
+    let sse_stream = stream.map(|result| -> Result<Event, Infallible> {
+        match result {
+            Ok(block) => Ok(Event::default()
+                .data(serde_json::to_string(&block).unwrap_or_default())),
+            Err(_broadcast_err) => {
+                // 실제로는 오류 상황. 
+                // 여기서는 예시로 "오류 메시지를 이벤트로 보낸다" 
+                // 그리고 진짜 Err(...)는 발생시키지 않음
+                Ok(Event::default()
+                    .data("Broadcast error occurred."))
+            }
+        }
+    });
+
+    Sse::new(sse_stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+}
+
 
 // =============== 서버(합의/거래 흐름) 구조체 ===============
 pub struct Server {

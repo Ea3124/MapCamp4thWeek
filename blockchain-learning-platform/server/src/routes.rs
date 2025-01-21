@@ -1,16 +1,19 @@
 // server/src/routes.rs
 
 use axum::{
-    Router, 
-    routing::{post, get}, 
-    extract::Extension, 
-    Json
+    Router,
+    routing::{post, get},
+    extract::Extension,
+    Json,
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast::Sender, mpsc::Sender as MpscSender, Mutex};
 
 use crate::models::{Block, Problem, ValidationResult, Transaction};
 use crate::handlers::my_broadcast::{self, Server};
+
+// 새로 추가
+use crate::handlers::my_broadcast::stream_blocks_sse;
 
 pub fn create_routes(
     tx: Arc<Sender<Block>>,
@@ -45,7 +48,7 @@ pub fn create_routes(
         )
         .layer(Extension(Arc::clone(&tx)))
 
-        // ** 거래(트랜잭션) 제출 경로 추가 **
+        // 거래(트랜잭션) 제출 경로
         .route(
             "/transaction",
             post({
@@ -58,6 +61,12 @@ pub fn create_routes(
                     .await
                 }
             }),
+        )
+
+        // ** 블록을 SSE로 스트리밍하는 라우트 추가 **
+        .route(
+            "/blocks_sse",
+            get(stream_blocks_sse), // 여기서 실제 SSE 처리를 하게 됨
         )
 
         // 기본 경로
