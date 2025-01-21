@@ -7,11 +7,12 @@ use axum::{
 use std::sync::Arc;
 use tokio::sync::{broadcast::Sender, mpsc::Sender as MpscSender};
 
-use crate::models::{Block, ValidationResult};
+use crate::models::{Block, Problem, ValidationResult};
 use crate::handlers::my_broadcast;
 
 pub fn create_routes(
     tx: Arc<Sender<Block>>,
+    problem_tx: Arc<Sender<Problem>>,
     validation_sender: MpscSender<ValidationResult>
 ) -> Router {
     Router::new()
@@ -21,7 +22,7 @@ pub fn create_routes(
                     my_broadcast::broadcast_problem
             ),
         )
-        .layer(Extension(tx.clone()))
+        .layer(Extension(problem_tx.clone()))
         // 블록 제출
         .route(
             "/submit_block",
@@ -39,6 +40,7 @@ pub fn create_routes(
                 }
             }),
         )
+        .layer(Extension(tx.clone()))
         // 기본 경로
         .route("/",get(|| async { "Hello, World!" }))
 }

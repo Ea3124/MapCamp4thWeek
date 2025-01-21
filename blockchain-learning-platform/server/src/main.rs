@@ -19,6 +19,7 @@ async fn main() {
     // --------------------------
     let (problem_tx, _problem_rx) = broadcast::channel::<models::Problem>(100);
 
+    let problem_tx = Arc::new(problem_tx);
     // --------------------------
     // 2) Block 전용 채널 생성
     // --------------------------
@@ -44,7 +45,8 @@ async fn main() {
 
     // 라우터 생성
     // route table보고 어떻게 broadcast할지 설정
-    let app: Router = routes::create_routes(block_tx.clone(), validation_sender);
+    let app: Router = routes::create_routes(block_tx.clone(),problem_tx.clone() ,validation_sender)
+    .layer(Extension(block_tx.clone()));
 
     // 서버 시작
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));

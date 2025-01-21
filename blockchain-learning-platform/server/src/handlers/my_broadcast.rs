@@ -3,10 +3,9 @@ use axum::{
     response::IntoResponse,
     http::StatusCode,
 };
-use hyper::server;
 use std::sync::Arc;
 use tokio::sync::{broadcast::Sender, mpsc::Sender as MpscSender};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{mpsc};
 
 use crate::models::{Block, Problem, ValidationResult};
 use rand::Rng;
@@ -16,7 +15,7 @@ use std::collections::HashMap;
 /// 문제를 생성하고 브로드캐스트하는 핸들러
 pub async fn broadcast_problem(
     Extension(tx): Extension<Arc<Sender<Problem>>>,
-) -> impl IntoResponse{
+){
     // 새로운 문제 생성
     let problem = Problem {
         id: rand::thread_rng().gen(), // `rand::Rng`에서 `gen()` 호출
