@@ -21,9 +21,10 @@ pub async fn broadcast_problem(
     let problem = Problem {
         id: rand::thread_rng().gen(), 
         matrix: vec![
-            vec![8, 1, 6],
-            vec![3, 5, 7],
-            vec![4, 9, 2],
+            vec![16, 2, 3, 13],
+            vec![5, 11, 10, 8],
+            vec![9, 7, 6, 12],
+            vec![4, 14, 15, 1],
         ],
     };
 
