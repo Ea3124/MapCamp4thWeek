@@ -1,6 +1,6 @@
 use iced::{
     alignment::Alignment,
-    widget::{container, text, Column, Row},
+    widget::{button,container, text, Column, Row},
     Element, Length,
 };
 use crate::Message;
@@ -9,7 +9,7 @@ use crate::blockchain::blockchain_db::Block;
 pub fn view_chain_info<'a>(blocks: &'a [Block]) -> Element<'a, Message> {
     let mut content = Column::new()
         .padding(20)
-        .align_x(Alignment::Start)
+        .align_items(Alignment::Start)
         .push(text("Local Blockchain Information").size(24))
         .push(text("Stored Blocks:").size(18));
 
@@ -24,6 +24,21 @@ pub fn view_chain_info<'a>(blocks: &'a [Block]) -> Element<'a, Message> {
 
         content = content.push(block_info);
     }
+
+    // 아래 두 개의 버튼을 추가
+    // 1) DB 초기화
+    content = content.push(
+        button("Reset DB")
+            .padding(10)
+            .on_press(Message::ResetDB),
+    );
+
+    // 2) 블록 추가
+    content = content.push(
+        button("Add Random Block")
+            .padding(10)
+            .on_press(Message::AddRandomBlock),
+    );
 
     container(content)
         .width(Length::Fill)

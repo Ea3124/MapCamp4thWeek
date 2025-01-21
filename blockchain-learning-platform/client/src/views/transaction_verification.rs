@@ -8,7 +8,8 @@ use crate::Message;
 pub fn view_transaction_verification<'a>() -> Element<'a, Message> {
     let content = Column::new()
         .padding(20)
-        .align_x(Alignment::Start)
+        // align_x -> align_items
+        .align_items(Alignment::Start)
         .push(text("Transaction Verification").size(24))
         .push(text("Result").size(18));
 

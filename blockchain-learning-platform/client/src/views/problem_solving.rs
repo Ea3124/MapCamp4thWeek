@@ -1,11 +1,11 @@
 use iced::{
-    alignment::Alignment,
+    alignment::{Alignment, Horizontal, Vertical},
     widget::{button, column, container, text, text_input, Row},
     Element, Length,
 };
 use crate::Message;
 
-pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI,) -> Element<'a, Message> {
+pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI) -> Element<'a, Message> {
     let problem_grid = vec![
         vec![16, 2, 3, 13],
         vec![5, 11, 10, 8],
@@ -23,7 +23,9 @@ pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI,) -> Eleme
                             text(num.to_string())
                                 .width(Length::Fill)
                                 .height(Length::Fill)
-                                .align_x(Alignment::Center)
+                                // align_x -> horizontal_alignment
+                                .horizontal_alignment(Horizontal::Center)
+                                .vertical_alignment(Vertical::Center)
                         )
                         .width(Length::Fixed(50.0))
                         .height(Length::Fixed(50.0))
@@ -44,10 +46,10 @@ pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI,) -> Eleme
                 Row::with_children(
                     (0..4).map(|j| {
                         text_input("", &state.solution_input[i][j])
-                        .on_input(move |value| Message::InputChanged(i, j, value))
-                        .padding(5)
-                        .width(Length::Fixed(50.0))
-                        .into()
+                            .on_input(move |value| Message::InputChanged(i, j, value))
+                            .padding(5)
+                            .width(Length::Fixed(50.0))
+                            .into()
                     }).collect::<Vec<_>>()
                 )
                 .spacing(10)
@@ -66,11 +68,14 @@ pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI,) -> Eleme
                 .on_press(Message::SubmitSolution),
         ]
         .spacing(20)
-        .align_x(Alignment::Center),
+        // align_x -> align_items
+        .align_items(Alignment::Center),
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
+    // center_x(Length::Fill) -> center_x()
+    // center_y(Length::Fill) -> center_y()
+    .center_x()
+    .center_y()
     .into()
 }

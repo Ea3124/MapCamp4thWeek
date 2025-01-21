@@ -94,4 +94,34 @@ impl BlockChainDB {
         blocks.sort_by_key(|block| block.index); // 인덱스 정렬
         blocks
     }
+    
+    /// DB를 초기화(모든 블록 삭제 후 제네시스 블록 재생성)
+    pub fn reset_db(&self) {
+        // 1) 모든 block_... 키 삭제
+        let mut batch = rocksdb::WriteBatch::default();
+        for item in self.db.iterator(rocksdb::IteratorMode::Start) {
+            if let Ok((key, _value)) = item {
+                if key.starts_with(b"block_") {
+                    batch.delete(key);
+                }
+            }
+        }
+        // latest_block_index 삭제
+        batch.delete(b"latest_block_index");
+
+        // 일괄 적용
+        self.db.write(batch).expect("DB 초기화 실패");
+
+        // 2) 제네시스 블록 추가
+        let genesis_block = Block::new(
+            0,
+            vec![],
+            vec![],
+            vec![],
+            "GenesisNode".into(),
+            "Genesis Block".into(),
+        );
+        self.save_block(&genesis_block);
+        self.save_latest_index(0);
+    }
 }

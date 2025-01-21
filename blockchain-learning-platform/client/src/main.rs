@@ -12,19 +12,21 @@ use blockchain::blockchain_db::BlockChainDB;
 use blockchain::blockchain_db::Block;
 
 // ------------------------------
-// 핵심: iced 관련 import 정리
+// iced 관련 import 정리
 // ------------------------------
 use iced::{
-    Application, // iced 루트에서 Application 트레이트
+    executor,
+    Application,  // Application 트레이트
+    Command,      // iced::Command
     Element,
     Length,
-    Settings,    // iced 루트에서 Settings 구조체
+    Settings,     // iced::Settings
     Theme,
-    executor,    // executor::Default 사용
     widget::container,
 };
+
 use iced_aw::{TabLabel, Tabs};
-use tokio::process::Command;
+use rand::{Rng, thread_rng};
 
 // 메시지 열거형
 #[derive(Debug, Clone)]
@@ -33,6 +35,8 @@ enum Message {
     SubmitSolution,
     InputChanged(usize, usize, String), // (행, 열, 새로운 값)
     LoadChainInfo,                      // 체인 정보를 로드하는 메시지
+    ResetDB,          // DB 초기화 메시지
+    AddRandomBlock,   // 블록 추가 메시지
 }
 
 // 메인 상태 구조체
@@ -47,12 +51,64 @@ impl BlockchainClientGUI {
     fn new(db_path: &str) -> Self {
         let db = BlockChainDB::new(db_path);
 
+        // 시작 시 DB에서 기존 블록들을 불러옵니다.
+        let blocks = db.load_all_blocks();
+
         BlockchainClientGUI {
             active_tab: 0,
             solution_input: Default::default(),
-            blocks: Vec::new(),
+            blocks,
             db,
         }
+    }
+
+    /// 임의의 블록 추가
+    fn add_random_block(&mut self) {
+        let mut rng = thread_rng();
+        let problem = vec![vec!["1".to_string(), "2".to_string()]];
+        let solution = vec![vec!["3".to_string(), "4".to_string()]];
+        let node_id = format!("Node{}", rng.gen_range(1..1000));
+        let data = format!("Random Data {}", rng.gen::<u32>());
+
+        let latest_index = self.db.load_latest_index().unwrap_or(0);
+
+        let latest_block = match self.db.load_block(latest_index) {
+            Some(block) => block,
+            None => {
+                let genesis_block = Block::new(
+                    0,
+                    vec![],
+                    vec![],
+                    vec![],
+                    "GenesisNode".into(),
+                    "Genesis Block".into(),
+                );
+                self.db.save_block(&genesis_block);
+                self.db.save_latest_index(0);
+                genesis_block
+            }
+        };
+
+        let new_block = Block::new(
+            latest_block.index + 1,
+            problem,
+            solution,
+            latest_block.solution.clone(),
+            node_id,
+            data,
+        );
+
+        self.db.save_block(&new_block);
+        self.db.save_latest_index(new_block.index);
+
+        // 갱신
+        self.blocks = self.db.load_all_blocks();
+    }
+
+    /// DB 초기화
+    fn reset_db(&mut self) {
+        self.db.reset_db();
+        self.blocks = self.db.load_all_blocks();
     }
 }
 
@@ -127,6 +183,16 @@ fn update(state: &mut BlockchainClientGUI, msg: Message) {
             // DB에서 체인 정보 로드
             state.blocks = state.db.load_all_blocks();
         }
+        // 테스트
+        Message::ResetDB => {
+            // 자유 함수이므로 self가 아닌 state
+            state.reset_db();
+            println!("DB has been reset!");
+        }
+        Message::AddRandomBlock => {
+            state.add_random_block();
+            println!("Random block added!");
+        }
     }
 }
 
@@ -157,15 +223,15 @@ fn view<'a>(state: &'a BlockchainClientGUI) -> Element<'a, Message> {
     container(tabs)
         .width(Length::Fill)
         .height(Length::Fill)
+        // 기존: .center_x(Length::Fill), .center_y(Length::Fill) -> 인자 없는 메서드로 변경
         .center_x()
         .center_y()
         .into()
 }
 
 //--------------//
-// main 함수   //
+// main 함수    //
 //--------------//
 fn main() -> iced::Result {
-    // 앱 실행
     BlockchainClientGUI::run(Settings::default())
 }
