@@ -33,6 +33,8 @@ enum Message {
     SubmitSolution,
     InputChanged(usize, usize, String), // (행, 열, 새로운 값)
     LoadChainInfo,                      // 체인 정보를 로드하는 메시지
+    // **서버 전송 후 결과를 받는 메시지**
+    SubmitSolutionFinished(Result<(), String>),
 }
 
 // 메인 상태 구조체
@@ -118,7 +120,49 @@ fn update(state: &mut BlockchainClientGUI, msg: Message) {
             state.active_tab = i;
         }
         Message::SubmitSolution => {
-            println!("Solution submitted!");
+            println!("Solution submitted! Now sending to server...");
+
+            // 1) 4x4 string matrix -> Vec<Vec<u32>> 변환 (파싱)
+            let parsed_solution = state
+                .solution_input
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .filter_map(|val| val.parse::<u32>().ok()) // 파싱 실패하면 버림
+                        .collect::<Vec<u32>>()
+                })
+                .collect::<Vec<Vec<u32>>>();
+
+            // 2) 서버로 보낼 BlockForServer 구성 (임시 값들로 예시)
+            use crate::network::BlockForServer;
+            let block_data = BlockForServer {
+                index: 0,
+                timestamp: "temp-timestamp".to_string(),
+                solution: parsed_solution,
+                hash: "temp-hash".to_string(),
+                prev_hash: "temp-prev-hash".to_string(),
+                node_id: "client-node-id".to_string(),
+            };
+
+            // 3) 비동기 전송 - Command::perform 사용
+            //    http://143.248.196.38:3000 등 실제 서버 주소로 교체
+            let server_url = "http://143.248.196.38:3000";
+            let future = async move {
+                match crate::network::submit_solution_block(server_url, &block_data).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e.to_string()),
+                }
+            };
+
+            // 이때 즉시 return을 하지 않고,
+            // Command::perform(...)를 반환하여 iced가 비동기 처리 후 메시지를 다시 보냄
+            iced::Command::perform(future, Message::SubmitSolutionFinished);
+        }
+        Message::SubmitSolutionFinished(result) => {
+            match result {
+                Ok(()) => println!("Server accepted the solution block successfully!"),
+                Err(err_msg) => eprintln!("Error submitting solution block: {}", err_msg),
+            }
         }
         Message::InputChanged(row, col, value) => {
             state.solution_input[row][col] = value;
@@ -129,6 +173,7 @@ fn update(state: &mut BlockchainClientGUI, msg: Message) {
         }
     }
 }
+
 
 //---------------//
 // 메인 뷰 함수  //

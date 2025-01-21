@@ -24,7 +24,3 @@ tokio = { version = "1.28", features = ["full"] }
 
 # 네트워킹(WebSocket/SSE) 쓸 수도 있음
 # tokio-tungstenite = "0.18"
-
-# 기타 필요 라이브러리
-[workspace]
-resolver = "2"
