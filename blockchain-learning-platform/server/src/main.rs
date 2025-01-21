@@ -1,10 +1,12 @@
 // server/src/main.rs
 
-use axum::Router;
+use axum::{Router};
 use axum::extract::Extension;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::task;
+use tower::{ServiceBuilder};
+use tower::limit::ConcurrencyLimitLayer;
 
 mod models;
 mod routes;
@@ -14,17 +16,16 @@ mod handlers {
 
 #[tokio::main]
 async fn main() {
-        // --------------------------
+    // --------------------------
     // 1) Problem 전용 채널 생성
     // --------------------------
     let (problem_tx, _problem_rx) = broadcast::channel::<models::Problem>(100);
-
     let problem_tx = Arc::new(problem_tx);
+
     // --------------------------
     // 2) Block 전용 채널 생성
     // --------------------------
     let (block_tx, _block_rx) = broadcast::channel::<models::Block>(100);
-    // Arc 로 감싸기
     let block_tx = Arc::new(block_tx);
 
     // --------------------------
@@ -32,23 +33,40 @@ async fn main() {
     // --------------------------
     let (validation_tx, validation_rx) = mpsc::channel::<models::ValidationResult>(100);
 
-    // ------------------------------------------------------------------
-    // (선택) 서버 구조체 초기화 - your custom Server / Sender (if needed)
-    // ------------------------------------------------------------------
-    // 예: my_broadcast.rs 안에 Sender::new(capacity: usize) -> (Server, MpscSender<ValidationResult>)
+    // ------------------------------------
+    // 4) 서버(합의/거래 흐름 관리) 구조체 생성
+    // ------------------------------------
     let (server, validation_sender) = handlers::my_broadcast::Server::new(100);
+    // 여러 곳에서 동시에 접근할 수 있도록 Arc<Mutex<Server>> 래핑
+    let server = Arc::new(Mutex::new(server));
 
-    // -------------------------------------------------------
-    // 4) 검증 결과를 처리하는 비동기 태스크 (합의 로직 등 수행)
-    // -------------------------------------------------------
-    task::spawn(handle_validation_results(server, validation_rx));
+    // ----------------------------
+    // 5) 검증 결과를 처리하는 태스크
+    // ----------------------------
+    // - consensus 확인
+    // - 블록 승인 시 30초 거래 모드 진입, 이후 문제 브로드캐스트
+    let server_clone_for_validation = Arc::clone(&server);
+    let problem_tx_for_validation = Arc::clone(&problem_tx);
+    task::spawn(async move {
+        handle_validation_results(server_clone_for_validation, validation_rx, problem_tx_for_validation).await;
+    });
 
-    // 라우터 생성
-    // route table보고 어떻게 broadcast할지 설정
-    let app: Router = routes::create_routes(block_tx.clone(),problem_tx.clone() ,validation_sender)
-    .layer(Extension(block_tx.clone()));
+    // ----------------------------
+    // 6) 라우터 생성 및 서버 시작
+    // ----------------------------
+    let app: Router = routes::create_routes(
+        Arc::clone(&block_tx),
+        Arc::clone(&problem_tx),
+        validation_sender,
+        Arc::clone(&server),
+    )
+    // 동시 30개 요청 처리 제한
+    .layer(ServiceBuilder::new().layer(ConcurrencyLimitLayer::new(30)))
+    // 추가로 필요한 Extension 주입
+    .layer(Extension(Arc::clone(&block_tx)))
+    .layer(Extension(Arc::clone(&problem_tx)))
+    .layer(Extension(Arc::clone(&server)));
 
-    // 서버 시작
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Server listening on {}", addr);
 
@@ -60,17 +78,17 @@ async fn main() {
 
 // 검증 결과를 처리하는 비동기 함수
 async fn handle_validation_results(
-    mut server: handlers::my_broadcast::Server,
+    server: Arc<Mutex<handlers::my_broadcast::Server>>,
     mut validation_rx: mpsc::Receiver<models::ValidationResult>,
+    problem_tx: Arc<broadcast::Sender<models::Problem>>,
 ) {
     while let Some(validation_result) = validation_rx.recv().await {
-        // 검증 결과 처리
         println!(
             "Received validation result from node {}: {:?}",
             validation_result.node_id, validation_result.is_valid
         );
-        
-        // 합의 로직 수행
-        server.process_consensus(validation_result).await;
+        // 서버 락 획득 후 합의 로직 처리
+        let mut server_guard = server.lock().await;
+        server_guard.process_consensus(validation_result, Arc::clone(&problem_tx)).await;
     }
 }
