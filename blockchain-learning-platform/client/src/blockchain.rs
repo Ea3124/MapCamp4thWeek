@@ -1,61 +1,82 @@
 // client/src/blockchain.rs
 
 use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
-use chrono::Utc;
-
-use crate::utils::current_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
     pub timestamp: String,
-    pub data: String,
-    pub prev_hash: String,
-    pub hash: String,
+    pub problem: Vec<Vec<String>>,     // 블록에 포함된 문제 (서버에서 마방진 생성 후 일부 가려서 클라에 전송송)
+    pub solution: Vec<Vec<String>>, // 노드가 제출한 풀이 -> 아래와 통합?     
+    pub prev_solution: Vec<Vec<String>>,       // 이전 블록의 해시 -> 이전 블록문제의 정답으로 교체 
+    pub node_id: String,         // 블록을 생성한 노드 ID
+    pub data: String, // 거래 내역
 }
 
-/// 새 블록을 생성 (이전 블록을 알고 있어야 함)
-pub fn create_block(last_block: &Block, data: &str) -> Block {
-    let new_index = last_block.index + 1;
-    let timestamp = current_timestamp();
-    let prev_hash = last_block.hash.clone();
+pub struct BlockChain {
+    chain: Vec<Block>,
+}
 
-    let hash = calculate_hash(new_index, &timestamp, data, &prev_hash);
+pub impl Block {
+    // 새로운 블록 생성 (서버에서 받은 요청 검증 후)
+    fn new(
+        index: u64, 
+        problem: Vec<Vec<String>>,
+        solution: Vec<Vec<String>>, 
+        previous_solution: Vec<Vec<String>>,
+        node_id: String, 
+        data: String,
+    ) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs();
 
-    Block {
-        index: new_index,
-        timestamp,
-        data: data.to_string(),
-        prev_hash,
-        hash,
+        let mut block = Block {
+            index,
+            timestamp,
+            problem,
+            solution,
+            prev_solution,
+            node_id,
+            data,
+        };
     }
-}
 
-/// 블록 해시를 계산(sha256)
-fn calculate_hash(index: u64, timestamp: &str, data: &str, prev_hash: &str) -> String {
-    let input = format!("{}{}{}{}", index, timestamp, data, prev_hash);
-    let mut hasher = Sha256::new();
-    hasher.update(input.as_bytes());
-    let result = hasher.finalize();
-    hex::encode(result)
 }
+/* 
+pub impl BlockChain {
+    // 새로운 블록체인 초기화
+    fn new() -> Self {
+        let mut blockchain = Blockchain {
+            chain: Vec::new(),
+        };
+        blockchain.create_genesis_block();
+        blockchain
+    }
 
-/// 새 블록이 이전 블록과 잘 연결되는지 검증
-pub fn validate_block(new_block: &Block, last_block: &Block) -> bool {
-    // 1) prev_hash가 last_block.hash와 일치하는가?
-    if new_block.prev_hash != last_block.hash {
-        return false;
+    // 제네시스 블록 생성
+    fn create_genesis_block(&mut self) {
+        let genesis_block = Block::new(0, "Genesis Block".to_string(), "0".to_string());
+        self.chain.push(genesis_block);
     }
-    // 2) 해시 값이 올바른가?
-    let recalculated = calculate_hash(
-        new_block.index,
-        &new_block.timestamp,
-        &new_block.data,
-        &new_block.prev_hash
-    );
-    if new_block.hash != recalculated {
-        return false;
+
+    // 최신 블록 가져오기
+    fn get_latest_block(&self) -> &Block {
+        self.chain.last().expect("체인이 비어 있음")
     }
-    true
+
+    // 새로운 블록 추가
+    fn add_block(&mut self, data: String) {
+        let latest_block = self.get_latest_block();
+        let mut new_block = Block::new(
+            latest_block.index + 1,
+            data,
+            latest_block.hash.clone(),
+        );
+        new_block.mine_block(self.difficulty);
+        self.chain.push(new_block);
+    }
+
 }
+    */  // 미완성
