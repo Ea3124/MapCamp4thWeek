@@ -7,17 +7,22 @@ use bincode;
 pub struct Block {
     pub index: u64,
     pub timestamp: String,
-    pub problem: Vec<Vec<u32>>,      // 숫자 배열
+    pub problem: Problem,      // 숫자 배열
     pub solution: Vec<Vec<u32>>,     // 숫자 배열
     pub prev_solution: Vec<Vec<u32>>,
     pub node_id: String,
     pub data: String,
 }
 
+#[derive(Debug,Clone, Serialize, Deserialize )]
+pub struct Problem {
+    pub matrix: Vec<Vec<u32>>,
+}
+
 impl Block {
     pub fn new(
         index: u64,
-        problem: Vec<Vec<u32>>,
+        problem: Problem,
         solution: Vec<Vec<u32>>,
         prev_solution: Vec<Vec<u32>>,
         node_id: String,
@@ -112,10 +117,19 @@ impl BlockChainDB {
         // 일괄 적용
         self.db.write(batch).expect("DB 초기화 실패");
 
+        let example_problem = Problem {
+            matrix: vec![
+                vec![1, 2, 3, 5],
+                vec![5, 6, 7, 8],
+                vec![9, 10, 11, 12],
+                vec![13, 14, 15, 16],
+            ],
+        };
+
         // 2) 제네시스 블록 추가
         let genesis_block = Block::new(
             0,
-            vec![],
+            example_problem,
             vec![],
             vec![],
             "GenesisNode".into(),

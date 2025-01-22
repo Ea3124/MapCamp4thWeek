@@ -25,11 +25,11 @@ async fn main() {
     // --------------------------
     // 2) Block 전용 채널 생성
     // --------------------------
-    let (block_tx, _block_rx) = broadcast::channel::<models::Block>(100);
+    let (block_tx, _block_rx) = broadcast::channel::<String>(100); // String 타입으로 변경
     let block_tx = Arc::new(block_tx);
 
     // --------------------------
-    // 3) Validation 채널 생성
+    // 3-2) Validation 채널 생성
     // --------------------------
     let (validation_tx, validation_rx) = mpsc::channel::<models::ValidationResult>(100);
 

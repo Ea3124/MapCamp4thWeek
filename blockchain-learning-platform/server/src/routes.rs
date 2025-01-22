@@ -19,7 +19,7 @@ use axum::routing::get as axum_get;
 use crate::handlers::my_broadcast::handle_websocket;
 
 pub fn create_routes(
-    tx: Arc<Sender<Block>>,
+    tx: Arc<Sender<String>>,
     problem_tx: Arc<Sender<Problem>>,
     validation_sender: MpscSender<ValidationResult>,
     server: Arc<Mutex<Server>>, // 거래 핸들러에서 서버 상태 접근용
@@ -86,7 +86,7 @@ pub fn create_routes(
             "/ws",
             axum_get({
                 let problem_tx = Arc::clone(&problem_tx);
-                let block_tx = Arc::clone(&tx);
+                let block_tx = Arc::clone(&tx);  //string  변경
                 move |ws: axum::extract::ws::WebSocketUpgrade| {
                     handle_websocket(ws, problem_tx.clone(), block_tx.clone())
                 }

@@ -1,6 +1,8 @@
 // client/src/blockchain.rs
 use crate::blockchain::blockchain_db::{Block, BlockChainDB};
 
+use super::blockchain_db::Problem;
+
 pub struct BlockChain {
     db: BlockChainDB,
 }
@@ -10,11 +12,20 @@ impl BlockChain {
     pub fn new(db_path: &str) -> Self {
         let db = BlockChainDB::new(db_path);
 
+        let problem3 = Problem {
+            matrix: vec![
+                vec![1, 2, 3, 4],
+                vec![5, 6, 7, 8],
+                vec![9, 10, 11, 12],
+                vec![13, 14, 15, 16],
+            ],
+        };
+
         // 블록체인 초기화 및 제네시스 블록 생성
         if db.load_latest_index().is_none() {
             let genesis_block = Block::new(
                 0,
-                vec![],                         // 문제는 비어 있음
+                problem3,                         // 문제는 비어 있음
                 vec![],                         // 풀이도 비어 있음
                 vec![],                         // 이전 블록 풀이도 없음
                 "GenesisNode".to_string(),      // 제네시스 블록 생성 노드 ID
@@ -38,7 +49,7 @@ impl BlockChain {
     // 새로운 블록 추가
     pub fn add_block(
         &mut self,
-        problem: Vec<Vec<u32>>,
+        problem: Problem,
         solution: Vec<Vec<u32>>,
         node_id: String,
         data: String,

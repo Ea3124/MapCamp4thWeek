@@ -1,5 +1,6 @@
 // client/src/network.rs
 
+use crate::blockchain::blockchain_db::Problem; // blockchain_db.rs에서 가져옴
 use crate::Block;
 use reqwest::Client;
 use serde::{Serialize, Deserialize};
@@ -15,26 +16,20 @@ use futures::StreamExt;
 pub struct BlockForServer {
     pub index: u64,
     pub timestamp: String,
-    pub solution: Vec<Vec<u32>>,
-    pub hash: String,
-    pub prev_hash: String,
+    pub solution: Vec<Vec<u32>>,     // 숫자 배열
+    pub problem: Problem,      // 숫자 배열
+    pub prev_solution: Vec<Vec<u32>>,
     pub node_id: String,
-    // 필요한 경우 추가 필드
+    pub data: String,
 }
+
+
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum ServerMessage {
     Problem(Problem),
-    #[serde(rename = "block")]
     Block(Block),
-}
-
-// 문제 구조체 예시 (서버와 동일하게 정의)
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Problem {
-    pub id: u64,
-    pub matrix: Vec<Vec<u32>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,7 +101,6 @@ pub async fn submit_transaction(
     println!("Transaction response: {:?}", resp.text().await?);
     Ok(())
 }
-
 /// WebSocket을 통해 서버와 연결하고 메시지를 수신하는 함수
 pub async fn connect_to_websocket(
     server_url: &str,
@@ -127,18 +121,61 @@ pub async fn connect_to_websocket(
                 Ok(msg) => {
                     if msg.is_text() {
                         let text = msg.into_text().unwrap();
-                        match serde_json::from_str::<ServerMessage>(&text) {
-                            Ok(server_msg) => {
-                                if let Err(e) = sender.send(server_msg) {
-                                    eprintln!("Failed to send message to UI: {}", e);
+
+                        // 원본 메시지 로깅
+                        println!("Received raw message: {}", text);
+
+                        // JSON 데이터 역직렬화
+                        match serde_json::from_str::<Value>(&text) {
+                            Ok(json_value) => {
+                                if let Some(msg_type) = json_value.get("type").and_then(|v| v.as_str()) {
+                                    match msg_type {
+                                        "block" => {
+                                            if let Some(data) = json_value.get("data") {
+                                                match serde_json::from_value::<Value>(data.clone()) {
+                                                    Ok(debug_data) => {
+                                                        println!("Debug Data: {:?}", debug_data); // 문제 확인용 디버깅
+                                                        match serde_json::from_value::<Block>(data.clone()) {
+                                                            Ok(block) => {
+                                                                println!("Parsed Block: {:?}", block);
+                                                                if let Err(e) = sender.send(ServerMessage::Block(block)) {
+                                                                    eprintln!("Failed to send Block to UI: {}", e);
+                                                                }
+                                                            }
+                                                            Err(e) => eprintln!("Failed to parse Block: {}", e),
+                                                        }
+                                                    }
+                                                    Err(e) => eprintln!("Failed to debug Block data: {}", e),
+                                                }
+                                            } else {
+                                                eprintln!("Missing 'data' field for Block");
+                                            }
+                                        }
+                                        "problem" => {
+                                            if let Some(data) = json_value.get("data") {
+                                                match serde_json::from_value::<Problem>(data.clone()) {
+                                                    Ok(problem) => {
+                                                        println!("Parsed Problem: {:?}", problem);
+                                                        if let Err(e) = sender.send(ServerMessage::Problem(problem)) {
+                                                            eprintln!("Failed to send Problem to UI: {}", e);
+                                                        }
+                                                    }
+                                                    Err(e) => eprintln!("Failed to parse Problem: {}", e),
+                                                }
+                                            } else {
+                                                eprintln!("Missing 'data' field for Problem");
+                                            }
+                                        }
+                                        _ => eprintln!("Unknown message type: {}", msg_type),
+                                    }
+                                } else {
+                                    eprintln!("Missing 'type' field in message");
                                 }
-                            },
-                            Err(e) => {
-                                eprintln!("Failed to parse message: {}", e);
                             }
+                            Err(e) => eprintln!("Failed to parse raw message as JSON: {}", e),
                         }
                     }
-                },
+                }
                 Err(e) => {
                     eprintln!("WebSocket error: {}", e);
                     break;
@@ -149,3 +186,4 @@ pub async fn connect_to_websocket(
 
     Ok(())
 }
+

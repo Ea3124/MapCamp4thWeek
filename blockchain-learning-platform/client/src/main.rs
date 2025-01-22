@@ -5,6 +5,7 @@ mod views;
 mod blockchain;
 mod network;
 
+use blockchain::blockchain_db::Problem;
 use tokio::sync::mpsc::unbounded_channel;
 use views::problem_solving::view_problem_solving;
 use views::chain_info::view_chain_info;
@@ -92,7 +93,23 @@ impl BlockchainClientGUI {
     /// 임의의 블록 추가
     fn add_random_block(&mut self) {
         let mut rng = thread_rng();
-        let problem = vec![vec![1, 2]];
+        let problem1 = Problem {
+            matrix: vec![
+                vec![1, 2, 3, 4],
+                vec![5, 6, 7, 8],
+                vec![9, 10, 11, 12],
+                vec![13, 14, 15, 16],
+            ],
+        };
+        let problem2 = Problem {
+            matrix: vec![
+                vec![1, 2, 3, 4],
+                vec![5, 6, 7, 8],
+                vec![9, 10, 11, 12],
+                vec![13, 14, 15, 16],
+            ],
+        };
+        
         let solution = vec![vec![3, 4]];
 
         let node_id = format!("Node{}", rng.gen_range(1..1000));
@@ -105,7 +122,7 @@ impl BlockchainClientGUI {
             None => {
                 let genesis_block = Block::new(
                     0,
-                    vec![],
+                    problem1,
                     vec![],
                     vec![],
                     "GenesisNode".into(),
@@ -119,7 +136,7 @@ impl BlockchainClientGUI {
 
         let new_block = Block::new(
             latest_block.index + 1,
-            problem,
+            problem2,
             solution,
             latest_block.solution.clone(),
             node_id,
@@ -255,15 +272,36 @@ impl Application for BlockchainClientGUI {
                     })
                     .collect::<Vec<Vec<u32>>>();
 
+                let example_problem = Problem {
+                    matrix: vec![
+                        vec![1, 2, 3, 4],
+                        vec![5, 6, 7, 8],
+                        vec![9, 10, 11, 12],
+                        vec![13, 14, 15, 16],
+                    ],
+                };
+
                 // 2) 서버로 보낼 BlockForServer 구성 (임시 값들로 예시)
                 use network::BlockForServer;
                 let block_data = BlockForServer {
                     index: 0, // 실제 블록 인덱스로 교체
                     timestamp: "temp-timestamp".to_string(), // 실제 타임스탬프로 교체
-                    solution: parsed_solution,
-                    hash: "temp-hash".to_string(),           // 필요시 실제 해시로 교체
-                    prev_hash: "temp-prev-hash".to_string(), // 필요시 실제 이전 해시로 교체
+                    problem: example_problem,
+                    // solution: parsed_solution,
+                    solution: vec![
+                        vec![1, 2, 3, 13],
+                        vec![5, 11, 10, 8],
+                        vec![9, 7, 6, 12],
+                        vec![4, 14, 15, 1],
+                    ],    
+                    prev_solution: vec![
+                        vec![1, 2, 3, 13],
+                        vec![5, 11, 10, 8],
+                        vec![9, 7, 6, 12],
+                        vec![4, 14, 15, 1],
+                    ],           
                     node_id: "client-node-id".to_string(),
+                    data: "data".to_string(),
                 };
 
                 // 3) 비동기 전송 - Command::perform 사용

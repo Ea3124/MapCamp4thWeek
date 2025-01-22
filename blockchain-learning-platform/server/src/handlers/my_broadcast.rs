@@ -1,20 +1,17 @@
 // server/src/handlers/my_broadcast.rs
 
 use axum::{
-    extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
+    extract::ws::{Message as WsMessage, WebSocket},
     extract::{Extension, Json},
     response::IntoResponse,
     http::StatusCode,
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast::Sender as BroadcastSender,broadcast::Receiver as BroadcastReceiver, mpsc::Sender as MpscSender, Mutex};
-use tokio::sync::broadcast;
 use tokio::sync::mpsc;
-use futures::{StreamExt, SinkExt};
 use serde_json::json;
 
-use crate::models::{Block, Problem, ValidationResult, Transaction};
-use rand::Rng;
+use crate::models::{Block, Problem, ServerMessage, Transaction, ValidationResult};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -23,7 +20,7 @@ pub async fn broadcast_problem(
     Extension(tx): Extension<Arc<BroadcastSender<Problem>>>,
 ){
     let problem = Problem {
-        id: rand::thread_rng().gen(), 
+        // id: rand::thread_rng().gen(), 
         matrix: vec![
             vec![16, 2, 3, 13],
             vec![5, 11, 10, 8],
@@ -40,21 +37,32 @@ pub async fn broadcast_problem(
 // =============== 블록 제출 & 검증 요청 ===============
 pub async fn handle_block_submission(
     Json(block): Json<Block>,
-    Extension(tx): Extension<Arc<BroadcastSender<Block>>>,
+    Extension(tx): Extension<Arc<BroadcastSender<String>>>, // 직렬화된 JSON 문자열을 보냄
     Extension(_validation_sender): Extension<MpscSender<ValidationResult>>, // 사용하지 않음
 ) -> impl IntoResponse {
     println!("Received block in handle_block_submission: {:?}", block);
 
-    // 블록 브로드캐스트
-    if let Err(e) = tx.send(block.clone()) {
-        eprintln!("Failed to broadcast block: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to broadcast block");
-    }
+    // ServerMessage로 감싸기
+    let message = ServerMessage::Block(block.clone());
 
-    // 검증 요청은 WebSocket을 통해 노드들에게 전달되므로, ValidationResult를 직접 전송하지 않음
+    // JSON 문자열로 직렬화
+    match serde_json::to_string(&message) {
+        Ok(serialized_message) => {
+            // 브로드캐스트
+            if let Err(e) = tx.send(serialized_message) {
+                eprintln!("Failed to broadcast block: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to broadcast block");
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to serialize message: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to serialize message");
+        }
+    }
 
     (StatusCode::OK, "Block submitted and broadcasted successfully")
 }
+
 
 
 // =============== 거래(트랜잭션) 핸들러 ===============
@@ -88,7 +96,6 @@ pub struct Server {
     current_block: Option<Block>,
     votes: HashMap<String /* node_id */, bool>,
     total_nodes: usize,
-
     pub is_transaction_flow: bool, // 거래창이 열려 있는지 여부
 }
 
@@ -159,11 +166,12 @@ impl Server {
 
         // 4) 새 문제 브로드캐스트
         let new_problem = Problem {
-            id: rand::thread_rng().gen(),
+            // id: rand::thread_rng().gen(),
             matrix: vec![
-                vec![2, 9, 4],
-                vec![7, 5, 3],
-                vec![6, 1, 8],
+                vec![16, 2, 3, 13],
+                vec![5, 11, 10, 8],
+                vec![9, 7, 6, 12],
+                vec![4, 14, 15, 1],
             ],
         };
         if let Err(e) = problem_tx.send(new_problem) {
@@ -177,22 +185,24 @@ impl Server {
 
 // WebSocket 핸들러 함수
 pub async fn handle_websocket(
-    ws: WebSocketUpgrade,
+    ws: axum::extract::ws::WebSocketUpgrade,
     problem_tx: Arc<BroadcastSender<Problem>>,
-    block_tx: Arc<BroadcastSender<Block>>,
+    block_tx: Arc<BroadcastSender<String>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, problem_tx, block_tx))
 }
 
 
+
+
 async fn handle_socket(
     mut socket: WebSocket,
     problem_tx: Arc<BroadcastSender<Problem>>,
-    block_tx: Arc<BroadcastSender<Block>>,
+    block_tx: Arc<BroadcastSender<String>>,
 ) {
     // 각 채널의 수신기 생성
     let mut problem_rx: BroadcastReceiver<Problem> = problem_tx.subscribe();
-    let mut block_rx: BroadcastReceiver<Block> = block_tx.subscribe();
+    let mut block_rx: BroadcastReceiver<String> = block_tx.subscribe();
 
     loop {
         tokio::select! {
@@ -210,9 +220,12 @@ async fn handle_socket(
 
             // 블록 채널에서 새로운 메시지가 도착한 경우
             Ok(block) = block_rx.recv() => {
+                let block_json: serde_json::Value = serde_json::from_str(&block).expect("Failed to parse block");
+
+                println!("block_json: {}", block_json);
                 let msg = json!({
                     "type": "block",
-                    "data": block
+                    "data": block_json["data"] // 중첩 없이 JSON 객체로 포함
                 });
                 if let Err(e) = socket.send(WsMessage::Text(msg.to_string())).await {
                     eprintln!("WebSocket send error: {}", e);
