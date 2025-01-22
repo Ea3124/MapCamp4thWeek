@@ -4,15 +4,16 @@
 mod views;
 mod blockchain;
 mod network;
+mod transaction;
 
 use blockchain::blockchain_db::Problem;
 use tokio::sync::mpsc::unbounded_channel;
 use views::problem_solving::view_problem_solving;
 use views::chain_info::view_chain_info;
-use views::transaction_verification::view_transaction_verification;
+use views::block_verification::view_block_verification;
 
-use blockchain::blockchain_db::BlockChainDB;
-use blockchain::blockchain_db::Block;
+use blockchain::blockchain_db::{Block, BlockChainDB};
+use transaction::transaction::{Transaction, TransactionDB};
 
 // ------------------------------
 // iced 관련 import 정리
@@ -41,19 +42,27 @@ enum Message {
     TabSelected(usize),
     SubmitSolution,
     InputChanged(usize, usize, String), // (행, 열, 새로운 값)
-    LoadChainInfo,                      // 체인 정보를 로드하는 메시지
+    LoadChainInfo,                      // 체인 정보를 로드하는 메시지 ***
     ResetDB,          // DB 초기화 메시지
     AddRandomBlock,   // 블록 추가 메시지
 
     // 서버 전송 후 결과를 받는 메시지
     SubmitSolutionFinished(Result<(), String>),
-    SubmitValidationFinished(Result<(), String>),  // ← 블록 검증 메시지 전송 완료 후 수신
+    SubmitValidationFinished(Result<(), String>),  // ← 블록 검증 메시지 전송 완료 후 수신 **
     // 새로운 메시지: 서버로부터의 메시지 수신
-    ServerMessage(netServerMessage),
+    ServerMessage(netServerMessage), // ***
+    VerifyBlock,      // 서버에서 받은(가정) 블록을 로컬 체인에 추가(검증 통과)
+    RejectBlock,      // 서버 블록을 무시(검증 실패)
+
+    ReceivedProposedBlock(Option<netServerMessage>),
+
+    // --- 트랜잭션 관련 ---
+    AddRandomTransaction, // 트랜잭션 추가
+    ResetTxDB,           // 트랜잭션 DB 초기화
 
     // 거래 관련 메시지
-    TransactionSubmit(String, String, u32), // (sender, receiver, amount)
-    TransactionFinished(Result<(), String>),
+    TransactionSubmit(String, String, u32), // (sender, receiver, amount)// ***
+    TransactionFinished(Result<(), String>),// ***
 }
 
 // 메인 상태 구조체
@@ -64,15 +73,30 @@ struct BlockchainClientGUI {
     blocks: Vec<Block>,               // 로드된 블록 리스트
     db: BlockChainDB,                 // DB 인스턴스
     // 추가: 서버 메시지를 수신하기 위한 채널
-    server_msg_receiver: tokio::sync::mpsc::UnboundedReceiver<netServerMessage>,
+    server_msg_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<netServerMessage>>,
+    // /// (가정) 서버에서 받은 블록(하드코딩)
+    proposed_block: Option<Block>,
+    // 트랜잭션 관련
+    transactions: Vec<Transaction>,
+    tx_db: TransactionDB,
 }
 
 impl BlockchainClientGUI {
-    fn new(db_path: &str) -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) {
+    // fn new(db_path: &str) -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) { //*** 
+    fn new(db_path: &str, tx_db_path: &str) -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) {
         let db = BlockChainDB::new(db_path);
+
+        // DB를 열고 블록이 없는 경우 제네시스 블록 생성
+        if db.load_latest_index().is_none() {
+            db.reset_db();  // reset_db 내부에서 제네시스 블록 생성
+        }
 
         // 시작 시 DB에서 기존 블록들을 불러옵니다.
         let blocks = db.load_all_blocks();
+
+        // 트랜잭션 DB
+        let tx_db = TransactionDB::new(tx_db_path);
+        let transactions = tx_db.load_all_transactions();
 
         // 채널 생성 (서버 -> 클라이언트 메시지)
         let (tx, rx) = unbounded_channel();
@@ -81,13 +105,36 @@ impl BlockchainClientGUI {
             BlockchainClientGUI {
                 active_tab: 0,
                 solution_input: Default::default(),
-                transaction_input: (String::new(), String::new(), String::new()),
+                transaction_input: (String::new(), String::new(), String::new()), //***
                 blocks,
                 db,
-                server_msg_receiver: rx,
+                server_msg_receiver: Some(rx),
+                proposed_block: None,
+                transactions,
+                tx_db,
             },
             tx, // sender 반환
         )
+    }
+
+    pub async fn process_server_messages(&mut self) {
+        if let Some(receiver) = &mut self.server_msg_receiver {
+            while let Some(message) = receiver.recv().await {
+                match message {
+                    netServerMessage::Block(block) => {
+                        println!("Received Block: {:?}", block);
+                        // 수신한 Block을 처리
+                        self.blocks.push(block);
+                    }
+                    netServerMessage::Problem(problem) => {
+                        println!("Received Problem: {:?}", problem);
+                        // Problem 처리 로직 (필요 시 추가)
+                    }
+                }
+            }
+        } else {
+            eprintln!("server_msg_receiver is None. Cannot process server messages.");
+        }
     }
 
     /// 임의의 블록 추가
@@ -156,6 +203,37 @@ impl BlockchainClientGUI {
         self.blocks = self.db.load_all_blocks();
     }
 
+    /// 임의의 트랜잭션 추가
+    fn add_random_transaction(&mut self) {
+        let mut rng = thread_rng();
+        let sender = format!("Sender{}", rng.gen_range(1..1000));
+        let receiver = format!("Receiver{}", rng.gen_range(1..1000));
+        let payment = rng.gen_range(1..5000) as u64;
+
+        let latest_index = self.tx_db.load_latest_index().unwrap_or(0);
+
+        let new_tx = Transaction::new(
+            latest_index + 1,
+            sender,
+            receiver,
+            payment
+        );
+
+        self.tx_db.save_transaction(&new_tx);
+        self.tx_db.save_latest_index(new_tx.index);
+
+        self.transactions = self.tx_db.load_all_transactions();
+
+        println!("Random transaction added: {:?}", new_tx);
+    }
+
+    /// 트랜잭션 DB 초기화
+    fn reset_tx_db(&mut self) {
+        self.tx_db.reset_db();
+        self.transactions = self.tx_db.load_all_transactions();
+        println!("Transaction DB has been reset!");
+    }
+
     /// 블록 검증 로직 (여기서는 간단하게 true 반환)
     fn verify_block(&self, _block: &Block) -> bool {
         // 실제 검증 로직을 여기에 구현
@@ -207,7 +285,7 @@ impl BlockchainClientGUI {
 // Default 구현 (Application 초기화 등에 사용)
 impl Default for BlockchainClientGUI {
     fn default() -> Self {
-        let (state, _tx) = BlockchainClientGUI::new("blockchain_db");
+        let (state, _tx) = BlockchainClientGUI::new("blockchain_db", "transaction_db");
         state
     }
 }
@@ -229,7 +307,7 @@ impl Application for BlockchainClientGUI {
     type Flags = ();
 
     fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        let (mut state, tx) = BlockchainClientGUI::new("blockchain_db");
+        let (mut state, tx) = BlockchainClientGUI::new("blockchain_db","transaction");
 
         // WebSocket 연결을 비동기로 시작
         let server_url = "http://143.248.196.38:3000"; // 실제 서버 주소로 변경
@@ -356,6 +434,62 @@ impl Application for BlockchainClientGUI {
                 Command::none()
             }
 
+            Message::ServerMessage(netServerMessage::Block(block)) => {
+                println!("서버에서 블록을 수신하였습니다: {:?}", block);
+                // 우선 제안된 블록을 어딘가 저장
+                self.proposed_block = Some(block);
+                
+                // 필요하다면, 즉시 검증 수행 or 별도 로직 추가 가능
+                Command::none()
+            }
+            
+            Message::VerifyBlock => {
+                // 서버에서 받은 블록이 있는지 확인
+                if let Some(proposed) = self.proposed_block.take() {
+                    // 로컬 DB의 최신 블록
+                    let latest_index = self.db.load_latest_index().unwrap_or(0);
+                    let latest_block = self.db.load_block(latest_index).unwrap_or_else(|| {
+                        // 로컬이 비어있다면 Genesis 블록 생성
+                        Block::new(
+                            0,
+                            Problem { matrix: vec![vec![0;4];4] },
+                            vec![],
+                            vec![],
+                            "GenesisNode".into(),
+                            "Genesis Block".into()
+                        )
+                    });
+                    
+                    // 새 블록 생성
+                    let new_block = Block::new(
+                        latest_block.index + 1,
+                        proposed.problem.clone(),
+                        proposed.solution.clone(),
+                        latest_block.solution.clone(), // 이전 블록의 solution
+                        proposed.node_id.clone(),
+                        proposed.data.clone()
+                    );
+                    
+                    // 유효성 검사(예: self.verify_block(&new_block)) 후 DB 저장
+                    self.db.save_block(&new_block);
+                    self.db.save_latest_index(new_block.index);
+                    self.blocks = self.db.load_all_blocks();
+            
+                    println!("검증 성공! 새로운 블록을 DB에 추가했습니다: {:?}", new_block);
+                } else {
+                    println!("검증할 블록이 없습니다: proposed_block이 None");
+                }
+                Command::none()
+            }
+            
+            
+            // 검증 실패 -> 아무 것도 안 함(무시)
+            Message::RejectBlock => {
+                println!("블록 검증 실패! 제안된 블록을 폐기합니다.");
+                self.server_msg_receiver = None; // Replace with a new receiver
+                Command::none()
+            }
+
         // --------------------------------------
         // 1) WebSocket 수신: 서버가 새 블록을 전달
         // --------------------------------------
@@ -411,6 +545,16 @@ impl Application for BlockchainClientGUI {
             return Command::perform(future, Message::TransactionFinished);
         }
 
+        // --- 트랜잭션 관련 --- ***
+        Message::AddRandomTransaction => {
+            self.add_random_transaction();
+            Command::none()
+        }
+        Message::ResetTxDB => {
+            self.reset_tx_db();
+            Command::none()
+        }
+
         // ---------------------
         // 3) 검증/트랜잭션 후처리
         // ---------------------
@@ -428,7 +572,8 @@ impl Application for BlockchainClientGUI {
             }
             Command::none()
         },
-        Message::ServerMessage(netServerMessage::Problem(_)) => todo!()
+        Message::ServerMessage(netServerMessage::Problem(_)) => todo!(),
+        Message::ReceivedProposedBlock(server_message) => todo!(),
     }
 }
 
@@ -444,12 +589,12 @@ impl Application for BlockchainClientGUI {
             .push(
                 1,
                 TabLabel::Text("로컬 체인 정보 & 거래 내역".to_owned()),
-                view_chain_info(&self.blocks),
+                view_chain_info(&self.blocks, &self.transactions),
             )
             .push(
                 2,
                 TabLabel::Text("블록 검증".to_owned()),
-                view_transaction_verification(),
+                view_block_verification(self.blocks.last(), self.proposed_block.as_ref()),
             )
             .set_active_tab(&self.active_tab);
 
