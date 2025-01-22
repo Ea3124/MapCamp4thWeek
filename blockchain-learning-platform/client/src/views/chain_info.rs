@@ -36,14 +36,33 @@ pub fn view_chain_info<'a>(
 ) -> Element<'a, Message> {
     let blocks_scrollable = Scrollable::new(
         blocks.iter().fold(Column::new().spacing(10), |col, block| {
-            let block_row = Row::new()
+            // 첫 번째 행: Index, Timestamp, Node ID
+            let top_row = Row::new()
                 .spacing(10)
                 .push(text(format!("Index: {}", block.index)))
-                .push(text(format!("Node ID: {}", block.node_id)))
-                .push(text(format!("Data: {}", block.data)))
-                .push(text(format!("Timestamp: {}", block.timestamp)));
+                .push(text(format!("Timestamp: {}", block.timestamp)))
+                .push(text(format!("Node ID: {}", block.node_id)));
 
-            let framed_block = Container::new(block_row)
+            // 두 번째 행: Problem, Solution, Prev_Solution
+            let middle_row = Row::new()
+                .spacing(10)
+                .push(text(format!("Problem: {:?}", block.problem)))
+                .push(text(format!("Solution: {:?}", block.solution)))
+                .push(text(format!("Prev_Solution: {:?}", block.prev_solution)));
+
+            // 세 번째 행: Data
+            let bottom_row = Row::new()
+                .spacing(10)
+                .push(text(format!("Data: {}", block.data)));
+
+            // 위의 세 행을 Column으로 묶음
+            let block_info = Column::new()
+                .spacing(5)
+                .push(top_row)
+                .push(middle_row)
+                .push(bottom_row);
+
+            let framed_block = Container::new(block_info)
                 .padding(10)
                 .width(Length::Fill)
                 .style(BlueContainer); // 사용자 정의 스타일 적용
