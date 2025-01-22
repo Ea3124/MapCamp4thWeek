@@ -68,13 +68,10 @@ pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI) -> Elemen
                 .on_press(Message::SubmitSolution),
         ]
         .spacing(20)
-        // align_x -> align_items
         .align_items(Alignment::Center),
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    // center_x(Length::Fill) -> center_x()
-    // center_y(Length::Fill) -> center_y()
     .center_x()
     .center_y()
     .into()

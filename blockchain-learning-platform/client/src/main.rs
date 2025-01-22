@@ -4,13 +4,14 @@
 mod views;
 mod blockchain;
 mod network;
+mod transaction;
 
 use views::problem_solving::view_problem_solving;
 use views::chain_info::view_chain_info;
 use views::block_verification::view_block_verification;
 
-use blockchain::blockchain::BlockChainDB;
-use blockchain::blockchain::Block;
+use blockchain::blockchain::{Block, BlockChainDB};
+use transaction::transaction::{Transaction, TransactionDB};
 
 // ------------------------------
 // iced 관련 import 정리
@@ -42,6 +43,9 @@ enum Message {
     // 새로 추가된 블록 검증 관련 메시지
     VerifyBlock,      // 서버에서 받은(가정) 블록을 로컬 체인에 추가(검증 통과)
     RejectBlock,      // 서버 블록을 무시(검증 실패)
+    // --- 트랜잭션 관련 ---
+    AddRandomTransaction, // 트랜잭션 추가
+    ResetTxDB,           // 트랜잭션 DB 초기화
 }
 
 // 메인 상태 구조체
@@ -52,10 +56,13 @@ struct BlockchainClientGUI {
     db: BlockChainDB,                 // DB 인스턴스
     /// (가정) 서버에서 받은 블록(하드코딩)
     proposed_block: Option<Block>,
+    // 트랜잭션 관련
+    transactions: Vec<Transaction>,
+    tx_db: TransactionDB,
 }
 
 impl BlockchainClientGUI {
-    fn new(db_path: &str) -> Self {
+    fn new(db_path: &str, tx_db_path: &str) -> Self {
         let db = BlockChainDB::new(db_path);
 
         // DB를 열고 블록이 없는 경우 제네시스 블록 생성
@@ -65,6 +72,10 @@ impl BlockchainClientGUI {
 
         // 시작 시 DB에서 기존 블록들을 불러옵니다.
         let blocks = db.load_all_blocks();
+
+        // 트랜잭션 DB
+        let tx_db = TransactionDB::new(tx_db_path);
+        let transactions = tx_db.load_all_transactions();
 
         // (예시) 서버에서 받은 블록(하드코딩) - 실제론 통신을 통해 받아올 예정
         // 여기서는 DB의 마지막 인덱스 + 1로 index 설정
@@ -84,6 +95,9 @@ impl BlockchainClientGUI {
             blocks,
             db,
             proposed_block: Some(server_block), // 서버 블록을 미리 넣어둠
+
+            transactions,
+            tx_db,
         }
     }
 
@@ -135,12 +149,43 @@ impl BlockchainClientGUI {
         self.db.reset_db();
         self.blocks = self.db.load_all_blocks();
     }
+
+    /// 임의의 트랜잭션 추가
+    fn add_random_transaction(&mut self) {
+        let mut rng = thread_rng();
+        let sender = format!("Sender{}", rng.gen_range(1..1000));
+        let receiver = format!("Receiver{}", rng.gen_range(1..1000));
+        let payment = rng.gen_range(1..5000) as u64;
+
+        let latest_index = self.tx_db.load_latest_index().unwrap_or(0);
+
+        let new_tx = Transaction::new(
+            latest_index + 1,
+            sender,
+            receiver,
+            payment
+        );
+
+        self.tx_db.save_transaction(&new_tx);
+        self.tx_db.save_latest_index(new_tx.index);
+
+        self.transactions = self.tx_db.load_all_transactions();
+
+        println!("Random transaction added: {:?}", new_tx);
+    }
+
+    /// 트랜잭션 DB 초기화
+    fn reset_tx_db(&mut self) {
+        self.tx_db.reset_db();
+        self.transactions = self.tx_db.load_all_transactions();
+        println!("Transaction DB has been reset!");
+    }
 }
 
 // Default 구현 (Application 초기화 등에 사용)
 impl Default for BlockchainClientGUI {
     fn default() -> Self {
-        Self::new("blockchain_db")
+        Self::new("blockchain_db", "transaction_db")
     }
 }
 
@@ -148,15 +193,9 @@ impl Default for BlockchainClientGUI {
 // iced::Application 구현 //
 //------------------------//
 impl Application for BlockchainClientGUI {
-    // Executor (스레드 풀 설정)
     type Executor = executor::Default;
-
-    // 메시지 타입
     type Message = Message;
-
-    // 사용할 테마
     type Theme = Theme;
-
     // main에서 넘겨줄 Flags (여기서는 사용 X)
     type Flags = ();
 
@@ -288,6 +327,15 @@ impl Application for BlockchainClientGUI {
                 self.proposed_block = None;
                 Command::none()
             }
+            // --- 트랜잭션 관련 ---
+            Message::AddRandomTransaction => {
+                self.add_random_transaction();
+                Command::none()
+            }
+            Message::ResetTxDB => {
+                self.reset_tx_db();
+                Command::none()
+            }
         }
     }
 
@@ -322,7 +370,7 @@ fn view<'a>(state: &'a BlockchainClientGUI) -> Element<'a, Message> {
         .push(
             1,
             TabLabel::Text("로컬 체인 정보 & 거래 내역".to_owned()),
-            view_chain_info(&state.blocks),
+            view_chain_info(&state.blocks, &state.transactions),
         )
         .push(
             2,
