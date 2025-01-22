@@ -7,10 +7,10 @@ mod network;
 
 use views::problem_solving::view_problem_solving;
 use views::chain_info::view_chain_info;
-use views::transaction_verification::view_transaction_verification;
+use views::block_verification::view_block_verification;
 
-use blockchain::blockchain_db::BlockChainDB;
-use blockchain::blockchain_db::Block;
+use blockchain::blockchain::BlockChainDB;
+use blockchain::blockchain::Block;
 
 // ------------------------------
 // iced 관련 import 정리
@@ -35,11 +35,13 @@ enum Message {
     TabSelected(usize),
     SubmitSolution,
     InputChanged(usize, usize, String), // (행, 열, 새로운 값)
-    LoadChainInfo,                      // 체인 정보를 로드하는 메시지
     ResetDB,          // DB 초기화 메시지
     AddRandomBlock,   // 블록 추가 메시지
     // **서버 전송 후 결과를 받는 메시지**
     SubmitSolutionFinished(Result<(), String>),
+    // 새로 추가된 블록 검증 관련 메시지
+    VerifyBlock,      // 서버에서 받은(가정) 블록을 로컬 체인에 추가(검증 통과)
+    RejectBlock,      // 서버 블록을 무시(검증 실패)
 }
 
 // 메인 상태 구조체
@@ -48,20 +50,40 @@ struct BlockchainClientGUI {
     solution_input: [[String; 4]; 4], // 4x4 정답 입력 상태
     blocks: Vec<Block>,               // 로드된 블록 리스트
     db: BlockChainDB,                 // DB 인스턴스
+    /// (가정) 서버에서 받은 블록(하드코딩)
+    proposed_block: Option<Block>,
 }
 
 impl BlockchainClientGUI {
     fn new(db_path: &str) -> Self {
         let db = BlockChainDB::new(db_path);
 
+        // DB를 열고 블록이 없는 경우 제네시스 블록 생성
+        if db.load_latest_index().is_none() {
+            db.reset_db();  // reset_db 내부에서 제네시스 블록 생성
+        }
+
         // 시작 시 DB에서 기존 블록들을 불러옵니다.
         let blocks = db.load_all_blocks();
+
+        // (예시) 서버에서 받은 블록(하드코딩) - 실제론 통신을 통해 받아올 예정
+        // 여기서는 DB의 마지막 인덱스 + 1로 index 설정
+        let latest_index = db.load_latest_index().unwrap_or(0);
+        let server_block = Block::new(
+            latest_index + 1,
+            vec![vec!["Hard-coded Problem".into()]],
+            vec![vec!["Hard-coded Solution".into()]],
+            vec![],                    // prev_solution
+            "ServerNode".into(),      // node_id
+            "Proposed block from server".into()
+        );
 
         BlockchainClientGUI {
             active_tab: 0,
             solution_input: Default::default(),
             blocks,
             db,
+            proposed_block: Some(server_block), // 서버 블록을 미리 넣어둠
         }
     }
 
@@ -208,11 +230,6 @@ impl Application for BlockchainClientGUI {
                 self.solution_input[row][col] = value;
                 Command::none()
             }
-            Message::LoadChainInfo => {
-                // DB에서 체인 정보 로드
-                self.blocks = self.db.load_all_blocks();
-                Command::none()
-            }
             // 테스트
             Message::ResetDB => {
                 // 자유 함수이므로 self가 아닌 self
@@ -223,6 +240,52 @@ impl Application for BlockchainClientGUI {
             Message::AddRandomBlock => {
                 self.add_random_block();
                 println!("Random block added!");
+                Command::none()
+            }
+            // --- (새로 추가된 메시지) 서버 블록 검증 ---
+            // 검증 통과 -> 실제 체인(DB)에 추가
+            Message::VerifyBlock => {
+                // 서버에서 받은 블록(proposed_block)이 존재하는지 확인
+                if let Some(proposed) = self.proposed_block.take() {
+                    // 로컬 DB의 최신 블록 인덱스와 블록 정보를 가져옴
+                    let latest_index = self.db.load_latest_index().unwrap_or(0);
+                    let latest_block = self.db.load_block(latest_index).unwrap_or_else(|| {
+                        // 만약 로컬에 블록이 없다면 제네시스 블록을 기본값으로 사용
+                        Block::new(
+                            0,
+                            vec![],
+                            vec![],
+                            vec![],
+                            "GenesisNode".into(),
+                            "Genesis Block".into()
+                        )
+                    });
+
+                    // 서버에서 받은 블록의 데이터를 활용하되, 인덱스는 최신 블록 + 1로 설정하여 새 블록 생성
+                    let new_block = Block::new(
+                        latest_block.index + 1,      // 새로운 인덱스
+                        proposed.problem.clone(),    // 서버로부터 받은 문제 정보 (필요시, 기존 로직에 맞게 조정)
+                        proposed.solution.clone(),   // 서버로부터 받은 해결책 정보
+                        latest_block.solution.clone(), // 이전 해결책(현재 로컬의 마지막 블록의 해결책)
+                        proposed.node_id.clone(),    // 서버 노드 ID
+                        proposed.data.clone()        // 서버 블록 데이터
+                    );
+
+                    // 새로운 블록을 로컬 DB에 저장
+                    self.db.save_block(&new_block);
+                    self.db.save_latest_index(new_block.index);
+                    self.blocks = self.db.load_all_blocks();
+
+                    println!("블록 검증 통과! 새로운 블록을 추가했습니다: {:?}", new_block);
+                } else {
+                    println!("검증할 블록이 없습니다.");
+                }
+                Command::none()
+            }
+            // 검증 실패 -> 아무 것도 안 함(무시)
+            Message::RejectBlock => {
+                println!("블록 검증 실패! 제안된 블록을 폐기합니다.");
+                self.proposed_block = None;
                 Command::none()
             }
         }
@@ -264,7 +327,7 @@ fn view<'a>(state: &'a BlockchainClientGUI) -> Element<'a, Message> {
         .push(
             2,
             TabLabel::Text("블록 검증".to_owned()),
-            view_transaction_verification(),
+            view_block_verification(state.blocks.last(), state.proposed_block.as_ref()),
         )
         .set_active_tab(&state.active_tab);
 
