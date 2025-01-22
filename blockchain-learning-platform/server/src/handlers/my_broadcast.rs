@@ -10,27 +10,83 @@ use std::sync::Arc;
 use tokio::sync::{broadcast::Sender as BroadcastSender,broadcast::Receiver as BroadcastReceiver, mpsc::Sender as MpscSender, Mutex};
 use tokio::sync::mpsc;
 use serde_json::json;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 
 use crate::models::{Block, Problem, ServerMessage, Transaction, ValidationResult};
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// 4x4 마방진 생성
+fn generate_random_magic_square() -> Vec<Vec<u32>> {
+    let base_magic_square = vec![
+        vec![16, 2, 3, 13],
+        vec![5, 11, 10, 8],
+        vec![9, 7, 6, 12],
+        vec![4, 14, 15, 1],
+    ];
+
+    let mut rng = thread_rng();
+
+    // 행을 랜덤하게 섞음
+    let mut rows = base_magic_square.clone();
+    rows.shuffle(&mut rng);
+
+    // 열을 랜덤하게 섞음
+    let mut cols: Vec<Vec<u32>> = vec![vec![0; 4]; 4];
+    let col_order: Vec<usize> = (0..4).collect::<Vec<_>>().choose_multiple(&mut rng, 4).cloned().collect();
+
+    for i in 0..4 {
+        for j in 0..4 {
+            cols[i][j] = rows[i][col_order[j]];
+        }
+    }
+
+    cols
+}
+
+
+/// 특정 개수의 값을 0으로 비우는 마방진 생성
+fn generate_incomplete_magic_square(num_blank: usize) -> Vec<Vec<u32>> {
+    let mut magic_square = generate_random_magic_square();
+    let mut rng = thread_rng();
+
+    // 4x4 매트릭스의 인덱스를 모두 수집
+    let mut positions: Vec<(usize, usize)> = (0..4).flat_map(|i| (0..4).map(move |j| (i, j))).collect();
+
+    // 비울 인덱스를 랜덤하게 선택
+    positions.shuffle(&mut rng);
+    let blank_positions = &positions[..num_blank.min(16)];
+
+    // 값 비우기: 비워진 위치를 0으로 설정
+    for &(i, j) in blank_positions {
+        magic_square[i][j] = 0;
+    }
+
+    magic_square
+}
+
 // =============== 문제 브로드캐스트 ===============
 pub async fn broadcast_problem(
     Extension(tx): Extension<Arc<BroadcastSender<Problem>>>,
 ){
-    let problem = Problem {
-        // id: rand::thread_rng().gen(), 
-        matrix: vec![
-            vec![16, 2, 3, 13],
-            vec![5, 11, 10, 8],
-            vec![9, 7, 6, 12],
-            vec![4, 14, 15, 1],
-        ],
-    };
+    // 랜덤 마방진 생성 및 값 비우기
+    let matrix = generate_incomplete_magic_square(4); // 5개의 빈 칸 생성
 
-    if let Err(e) = tx.send(problem) {
-        eprintln!("Failed to broadcast problem: {}", e);
+    // Problem 생성
+    let problem = Problem { matrix };
+
+    // 문제 브로드캐스트
+    match tx.send(problem.clone()) {
+        Ok(subscriber_count) => {
+            println!(
+                "Problem broadcasted successfully to {} subscribers.",
+                subscriber_count
+            );
+        }
+        Err(e) => {
+            eprintln!("Failed to broadcast problem: {}", e);
+        }
     }
 }
 
