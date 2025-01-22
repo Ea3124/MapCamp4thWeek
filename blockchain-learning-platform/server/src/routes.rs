@@ -4,13 +4,19 @@ use axum::{
     Router, 
     routing::{post, get}, 
     extract::Extension, 
-    Json
+    Json, 
+    response::IntoResponse,
 };
+use hyper::StatusCode;
 use std::sync::Arc;
 use tokio::sync::{broadcast::Sender, mpsc::Sender as MpscSender, Mutex};
 
 use crate::models::{Block, Problem, ValidationResult, Transaction};
 use crate::handlers::my_broadcast::{self, Server};
+
+// 추가: WebSocket 관련 import
+use axum::routing::get as axum_get;
+use crate::handlers::my_broadcast::handle_websocket;
 
 pub fn create_routes(
     tx: Arc<Sender<Block>>,
@@ -56,6 +62,33 @@ pub fn create_routes(
                         Extension(server_clone.clone()),
                     )
                     .await
+                }
+            }),
+        )
+
+        // ** 검증 결과 제출 경로 추가 **
+        .route(
+            "/submit_validation",
+            post({
+                let validation_sender = validation_sender.clone();
+                move |Json(validation_result): Json<ValidationResult>| async move {
+                    if let Err(e) = validation_sender.send(validation_result).await {
+                        eprintln!("Failed to send validation result: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to submit validation result");
+                    }
+                    (StatusCode::OK, "Validation result submitted successfully")
+                }
+            }),
+        )
+
+        // ** WebSocket 라우트 추가 **
+        .route(
+            "/ws",
+            axum_get({
+                let problem_tx = Arc::clone(&problem_tx);
+                let block_tx = Arc::clone(&tx);
+                move |ws: axum::extract::ws::WebSocketUpgrade| {
+                    handle_websocket(ws, problem_tx.clone(), block_tx.clone())
                 }
             }),
         )

@@ -7,9 +7,9 @@ use bincode;
 pub struct Block {
     pub index: u64,
     pub timestamp: String,
-    pub problem: Vec<Vec<String>>,
-    pub solution: Vec<Vec<String>>,
-    pub prev_solution: Vec<Vec<String>>,
+    pub problem: Vec<Vec<u32>>,      // 숫자 배열
+    pub solution: Vec<Vec<u32>>,     // 숫자 배열
+    pub prev_solution: Vec<Vec<u32>>,
     pub node_id: String,
     pub data: String,
 }
@@ -17,9 +17,9 @@ pub struct Block {
 impl Block {
     pub fn new(
         index: u64,
-        problem: Vec<Vec<String>>,
-        solution: Vec<Vec<String>>,
-        prev_solution: Vec<Vec<String>>,
+        problem: Vec<Vec<u32>>,
+        solution: Vec<Vec<u32>>,
+        prev_solution: Vec<Vec<u32>>,
         node_id: String,
         data: String,
     ) -> Self {

@@ -1,13 +1,17 @@
 // server/src/handlers/my_broadcast.rs
 
 use axum::{
+    extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade},
     extract::{Extension, Json},
     response::IntoResponse,
     http::StatusCode,
 };
 use std::sync::Arc;
-use tokio::sync::{broadcast::Sender, mpsc::Sender as MpscSender, Mutex};
+use tokio::sync::{broadcast::Sender as BroadcastSender,broadcast::Receiver as BroadcastReceiver, mpsc::Sender as MpscSender, Mutex};
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use futures::{StreamExt, SinkExt};
+use serde_json::json;
 
 use crate::models::{Block, Problem, ValidationResult, Transaction};
 use rand::Rng;
@@ -16,7 +20,7 @@ use std::time::Duration;
 
 // =============== 문제 브로드캐스트 ===============
 pub async fn broadcast_problem(
-    Extension(tx): Extension<Arc<Sender<Problem>>>,
+    Extension(tx): Extension<Arc<BroadcastSender<Problem>>>,
 ){
     let problem = Problem {
         id: rand::thread_rng().gen(), 
@@ -36,8 +40,8 @@ pub async fn broadcast_problem(
 // =============== 블록 제출 & 검증 요청 ===============
 pub async fn handle_block_submission(
     Json(block): Json<Block>,
-    Extension(tx): Extension<Arc<Sender<Block>>>,
-    Extension(validation_sender): Extension<MpscSender<ValidationResult>>,
+    Extension(tx): Extension<Arc<BroadcastSender<Block>>>,
+    Extension(_validation_sender): Extension<MpscSender<ValidationResult>>, // 사용하지 않음
 ) -> impl IntoResponse {
     println!("Received block in handle_block_submission: {:?}", block);
 
@@ -47,17 +51,11 @@ pub async fn handle_block_submission(
         return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to broadcast block");
     }
 
-    // 검증 요청 (합의는 다른 태스크에서 진행)
-    if let Err(e) = validation_sender.send(ValidationResult {
-        block_hash: block.hash.clone(),
-        is_valid: false, // 일단 false 로 가정
-        node_id: "server".to_string(),
-    }).await {
-        eprintln!("Failed to send validation request: {}", e);
-    }
+    // 검증 요청은 WebSocket을 통해 노드들에게 전달되므로, ValidationResult를 직접 전송하지 않음
 
     (StatusCode::OK, "Block submitted and broadcasted successfully")
 }
+
 
 // =============== 거래(트랜잭션) 핸들러 ===============
 pub async fn handle_transaction(
@@ -126,7 +124,7 @@ impl Server {
     pub async fn process_consensus(
         &mut self, 
         validation_result: ValidationResult,
-        problem_tx: Arc<Sender<Problem>>,
+        problem_tx: Arc<BroadcastSender<Problem>>,
     ) {
         // 1) 투표 기록
         self.add_vote(validation_result.node_id, validation_result.is_valid);
@@ -146,7 +144,7 @@ impl Server {
 
     /// 실제로 30초간 거래 플로우를 활성화하고,
     /// 이후 종료 시 새 문제를 브로드캐스트
-    async fn start_transaction_flow(&mut self, problem_tx: Arc<Sender<Problem>>) {
+    async fn start_transaction_flow(&mut self, problem_tx: Arc<BroadcastSender<Problem>>) {
         // 1) 거래 창 오픈
         self.is_transaction_flow = true;
         println!("=== Transaction flow started for 30 seconds ===");
@@ -174,4 +172,60 @@ impl Server {
             println!("A new problem has been broadcast after transaction flow.");
         }
     }
+}
+
+
+// WebSocket 핸들러 함수
+pub async fn handle_websocket(
+    ws: WebSocketUpgrade,
+    problem_tx: Arc<BroadcastSender<Problem>>,
+    block_tx: Arc<BroadcastSender<Block>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, problem_tx, block_tx))
+}
+
+
+async fn handle_socket(
+    mut socket: WebSocket,
+    problem_tx: Arc<BroadcastSender<Problem>>,
+    block_tx: Arc<BroadcastSender<Block>>,
+) {
+    // 각 채널의 수신기 생성
+    let mut problem_rx: BroadcastReceiver<Problem> = problem_tx.subscribe();
+    let mut block_rx: BroadcastReceiver<Block> = block_tx.subscribe();
+
+    loop {
+        tokio::select! {
+            // 문제 채널에서 새로운 메시지가 도착한 경우
+            Ok(problem) = problem_rx.recv() => {
+                let msg = json!({
+                    "type": "problem",
+                    "data": problem
+                });
+                if let Err(e) = socket.send(WsMessage::Text(msg.to_string())).await {
+                    eprintln!("WebSocket send error: {}", e);
+                    break;
+                }
+            }
+
+            // 블록 채널에서 새로운 메시지가 도착한 경우
+            Ok(block) = block_rx.recv() => {
+                let msg = json!({
+                    "type": "block",
+                    "data": block
+                });
+                if let Err(e) = socket.send(WsMessage::Text(msg.to_string())).await {
+                    eprintln!("WebSocket send error: {}", e);
+                    break;
+                }
+            }
+
+            // WebSocket 연결 종료 처리
+            else => {
+                break;
+            }
+        }
+    }
+
+    println!("WebSocket connection closed");
 }

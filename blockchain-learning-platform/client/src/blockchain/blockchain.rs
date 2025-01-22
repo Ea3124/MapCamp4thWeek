@@ -38,8 +38,8 @@ impl BlockChain {
     // 새로운 블록 추가
     pub fn add_block(
         &mut self,
-        problem: Vec<Vec<String>>,
-        solution: Vec<Vec<String>>,
+        problem: Vec<Vec<u32>>,
+        solution: Vec<Vec<u32>>,
         node_id: String,
         data: String,
     ) {
