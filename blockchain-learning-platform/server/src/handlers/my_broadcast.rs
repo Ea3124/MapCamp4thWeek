@@ -168,13 +168,13 @@ impl Server {
     //     valid_count > self.total_nodes / 2
     // }
 
-    // pub fn check_consensus(&self) -> bool {
-    //     self.votes.values().any(|&v| v)
-    // }
     pub fn check_consensus(&self) -> bool {
-        let valid_count = self.votes.values().filter(|&&v| v).count();
-        valid_count >= 2 // 두 개 이상의 true 투표가 있을 경우
+        self.votes.values().any(|&v| v)
     }
+    // pub fn check_consensus(&self) -> bool {
+    //     let valid_count = self.votes.values().filter(|&&v| v).count();
+    //     valid_count >= 2 // 두 개 이상의 true 투표가 있을 경우
+    // }
 
     /// 문제 해결 상태 업데이트
     pub fn mark_problem_as_solved(&mut self) {
