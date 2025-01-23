@@ -35,31 +35,65 @@ pub fn view_chain_info<'a>(
 ) -> Element<'a, Message> {
     let blocks_scrollable = Scrollable::new(
         blocks.iter().fold(Column::new().spacing(10), |col, block| {
-            // 첫 번째 행: Index, Timestamp, Node ID
-            let top_row = Row::new()
+            // Index (상단 왼쪽)
+            let index_row = Row::new().push(text(format!("Index: {}", block.index)));
+
+            // Timestamp와 Node ID (Index 아래에 가로로 배치)
+            let timestamp_node_row = Row::new()
                 .spacing(10)
-                .push(text(format!("Index: {}", block.index)))
                 .push(text(format!("Timestamp: {}", block.timestamp)))
                 .push(text(format!("Node ID: {}", block.node_id)));
 
-            // 두 번째 행: Problem, Solution, Prev_Solution
-            let middle_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Problem: {:?}", block.problem)))
-                .push(text(format!("Solution: {:?}", block.solution)))
-                .push(text(format!("Prev_Solution: {:?}", block.prev_solution)));
+            // Problem (4x4 형태로 표시)
+            let problem_matrix = block.problem.matrix.iter().fold(Column::new().spacing(5), |col, row| {
+                let row_text = row.iter().map(|val| format!("{}", val)).collect::<Vec<_>>().join(", ");
+                col.push(text(row_text))
+            });
 
-            // 세 번째 행: Data
-            let bottom_row = Row::new()
+            let problem_section = Column::new()
                 .spacing(10)
-                .push(text(format!("Data: {}", block.data)));
+                .push(text("Problem:").size(16))
+                .push(problem_matrix);
 
-            // 위의 세 행을 Column으로 묶음
+            // Solution (2D Vec 형태로 표시)
+            let solution_matrix = block.solution.iter().fold(Column::new().spacing(5), |col, row| {
+                let row_text = row.iter().map(|val| format!("{}", val)).collect::<Vec<_>>().join(", ");
+                col.push(text(row_text))
+            });
+
+            let solution_section = Column::new()
+                .spacing(10)
+                .push(text("Solution:").size(16))
+                .push(solution_matrix);
+
+            // Prev_Solution (2D Vec 형태로 표시)
+            let prev_solution_matrix = block.prev_solution.iter().fold(Column::new().spacing(5), |col, row| {
+                let row_text = row.iter().map(|val| format!("{}", val)).collect::<Vec<_>>().join(", ");
+                col.push(text(row_text))
+            });
+
+            let prev_solution_section = Column::new()
+                .spacing(10)
+                .push(text("Prev_Solution:").size(16))
+                .push(prev_solution_matrix);
+
+            // Problem, Solution, Prev_Solution을 가로로 배치
+            let main_section = Row::new()
+                .spacing(20) // 섹션 간 간격 조정
+                .push(problem_section)
+                .push(solution_section)
+                .push(prev_solution_section);
+
+            // Data (가장 하단)
+            let data_row = Row::new().push(text(format!("Data: {}", block.data)));
+
+            // 전체 레이아웃 구성
             let block_info = Column::new()
-                .spacing(5)
-                .push(top_row)
-                .push(middle_row)
-                .push(bottom_row);
+                .spacing(10)
+                .push(index_row)
+                .push(timestamp_node_row)
+                .push(main_section)
+                .push(data_row);
 
             let framed_block = Container::new(block_info)
                 .padding(10)

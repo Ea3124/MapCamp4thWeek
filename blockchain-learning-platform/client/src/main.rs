@@ -127,6 +127,7 @@ impl BlockchainClientGUI {
             server_msg_receiver: Some(rx_arc),
             proposed_block: None,
             current_problem: None, // 현재 문제 초기화
+            current_problem: None, // 현재 문제 초기화
             transactions,
             tx_db,
         };
@@ -509,42 +510,42 @@ impl Application for BlockchainClientGUI {
         // ---------------------------------------------------------
         // 2) 거래 전송: 굳이 &self 메서드를 직접 async로 안 쓰는 방식
         // ---------------------------------------------------------
-        Message::TransactionSubmit(sender, receiver, amount) => {
-            // (1) 거래 데이터 (소유권) 생성
-            let transaction = network::Transaction {
-                sender_id: sender,
-                receiver_id: receiver,
-                amount,
-            };
+            Message::TransactionSubmit(sender, receiver, amount) => {
+                // (1) 거래 데이터 (소유권) 생성
+                let transaction = network::Transaction {
+                    sender_id: sender,
+                    receiver_id: receiver,
+                    amount,
+                };
             // (2) 별도의 동기/검증 로직이 필요하다면, 여기서 self를 사용하고 즉시 끝냄
             //     (예: self.db 잔액 조회)
 
             // (3) 나머지 통신은 'static Future 로
-            let future = async move {
-                let server_url = "http://143.248.196.38:3000";
-                network::submit_transaction(server_url, &transaction)
-                    .await
-                    .map_err(|e| e.to_string())
-            };
-            return Command::perform(future, Message::TransactionFinished);
-        }
+                let future = async move {
+                    let server_url = "http://143.248.196.38:3000";
+                    network::submit_transaction(server_url, &transaction)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+                return Command::perform(future, Message::TransactionFinished);
+            }
 
-        // --- 트랜잭션 관련 --- ***
-        Message::AddRandomTransaction => {
-            self.add_random_transaction();
-            Command::none()
-        }
-        Message::ResetTxDB => {
-            self.reset_tx_db();
-            Command::none()
-        }
+            // --- 트랜잭션 관련 --- ***
+            Message::AddRandomTransaction => {
+                self.add_random_transaction();
+                Command::none()
+            }
+            Message::ResetTxDB => {
+                self.reset_tx_db();
+                Command::none()
+            }
 
-        Message::NoMoreMessages => {
-            // 채널이 닫힌 뒤에 계속 들어오는 “더미” 메시지
-            // 특별히 할 일이 없다면 그냥 Command::none()
-            println!("NoMoreMessages: channel is closed. Doing nothing...");
-            Command::none()
-        }
+            Message::NoMoreMessages => {
+                // 채널이 닫힌 뒤에 계속 들어오는 “더미” 메시지
+                // 특별히 할 일이 없다면 그냥 Command::none()
+                println!("NoMoreMessages: channel is closed. Doing nothing...");
+                Command::none()
+            }
 
         // ---------------------
         // 3) 검증/트랜잭션 후처리
@@ -587,6 +588,7 @@ impl Application for BlockchainClientGUI {
             )
             .push(
                 1,
+                TabLabel::Text("내 정보".to_owned()),
                 TabLabel::Text("내 정보".to_owned()),
                 view_chain_info(&self.blocks, &self.transactions),
             )
