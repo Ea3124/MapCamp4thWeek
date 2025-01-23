@@ -20,7 +20,6 @@ pub struct Problem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
-    pub block_hash: String,
     pub is_valid: bool,
     pub node_id: String,
 }

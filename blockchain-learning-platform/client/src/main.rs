@@ -84,7 +84,7 @@ struct BlockchainClientGUI {
     // 추가: 서버 메시지를 수신하기 위한 채널
     server_msg_receiver: Option<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<netServerMessage>>>>,
     // /// (가정) 서버에서 받은 블록(하드코딩)
-    proposed_block: Option<Block>,
+    proposed_block: Option<(Block, bool)>,
     // 트랜잭션 관련
     transactions: Vec<Transaction>,
     tx_db: TransactionDB,
@@ -245,35 +245,6 @@ impl BlockchainClientGUI {
         self.tx_db.reset_db();
         self.transactions = self.tx_db.load_all_transactions();
         println!("Transaction DB has been reset!");
-    }
-
-    /// 블록 검증 로직 (여기서는 간단하게 true 반환)
-    fn verify_block(&self, _block: &Block) -> bool {
-        // 실제 검증 로직을 여기에 구현
-        // 예: 해시 검사, nonce 검사 등등
-        true
-    }
-
-    /// 블록을 검증하고 그 결과를 서버에 제출
-    async fn validate_and_submit_block(&self, block: &Block) -> Result<(), String> {
-        // 1) 블록 유효성 검사
-        let is_valid = self.verify_block(block);
-
-        // 2) 서버로 전송할 검증결과 구조체 생성
-        let validation_result = ValidationResult {
-            is_valid,
-            node_id: "client_node_id".to_string(), // 실제 노드 ID를 사용
-        };
-
-        // 서버 URL은 실제 서버 주소로 변경
-        let server_url = "http://143.248.196.38:3000";
-
-        // 3) 서버에 POST 전송
-        if let Err(e) = network::submit_validation_result(server_url, &validation_result).await {
-            Err(format!("Failed to submit validation result: {}", e))
-        } else {
-            Ok(())
-        }
     }
 
     /// 거래를 서버에 제출하는 함수
@@ -466,75 +437,91 @@ impl Application for BlockchainClientGUI {
             }
             
             Message::VerifyBlock => {
-                // 서버에서 받은 블록이 있는지 확인
-                if let Some(proposed) = self.proposed_block.take() {
-                    // 로컬 DB의 최신 블록
-                    let latest_index = self.db.load_latest_index().unwrap_or(0);
+                        if let Some((proposed, _)) = self.proposed_block.take() {
+                            let latest_index = self.db.load_latest_index().unwrap_or(0);
                     let latest_block = self.db.load_block(latest_index).unwrap_or_else(|| {
-                        // 로컬이 비어있다면 Genesis 블록 생성
-                        Block::new(
-                            0,
-                            Problem { matrix: vec![vec![0;4];4] },
-                            vec![],
-                            vec![],
-                            "GenesisNode".into(),
-                            "Genesis Block".into()
-                        )
-                    });
+                            // 로컬이 비어있다면 Genesis 블록 생성
+                            Block::new(
+                                0,
+                                Problem { matrix: vec![vec![0;4];4] },
+                                vec![],
+                                vec![],
+                                "GenesisNode".into(),
+                                "Genesis Block".into()
+                            )
+                        });
+                        
+                        // 새 블록 생성
+                        let new_block = Block::new(
+                            latest_block.index + 1,
+                            proposed.problem.clone(),
+                            proposed.solution.clone(),
+                            latest_block.solution.clone(), // 이전 블록의 solution
+                            proposed.node_id.clone(),
+                            proposed.data.clone()
+                        );
+                            
+                            // 검증 성공, 블록을 로컬 체인에 추가
+                            self.db.save_block(&new_block);
+                            self.db.save_latest_index(new_block.index);
+                            self.blocks = self.db.load_all_blocks();
+                            println!("로컬체인: {:?}", self.blocks.clone());
                     
-                    // 새 블록 생성
-                    let new_block = Block::new(
-                        latest_block.index + 1,
-                        proposed.problem.clone(),
-                        proposed.solution.clone(),
-                        latest_block.solution.clone(), // 이전 블록의 solution
-                        proposed.node_id.clone(),
-                        proposed.data.clone()
-                    );
+                            // 서버로 검증 결과 전송
+                            let validation_result = ValidationResult {
+                                is_valid: true, // 검증 성공
+                                node_id: "client_node_id".to_string(),
+                            };
+                            let server_url = "http://143.248.196.38:3000";
+                            let future = async move {
+                                network::submit_validation_result(server_url, &validation_result)
+                                    .await
+                                    .map_err(|e| e.to_string())
+                            };
                     
-                    // 유효성 검사(예: self.verify_block(&new_block)) 후 DB 저장
-                    self.db.save_block(&new_block);
-                    self.db.save_latest_index(new_block.index);
-                    self.blocks = self.db.load_all_blocks();
-            
-                    println!("검증 성공! 새로운 블록을 DB에 추가했습니다: {:?}", new_block);
-                } else {
-                    println!("검증할 블록이 없습니다: proposed_block이 None");
-                }
-                Command::none()
-            }
-            
-            
-            // 검증 실패 -> 아무 것도 안 함(무시)
-            Message::RejectBlock => {
-                println!("블록 검증 실패! 제안된 블록을 폐기합니다.");
-                self.server_msg_receiver = None; // Replace with a new receiver
-                Command::none()
-            }
+                            println!("블록 검증 성공: 블록 추가 및 서버에 결과 전송");
+                            return Command::perform(future, Message::SubmitValidationFinished);
+                        } else {
+                            println!("검증할 블록이 없습니다!");
+                        }
+                        Command::none()
+                    }
+                    
+                    Message::RejectBlock => {
+                        if let Some((block, _)) = self.proposed_block.take() {
+                            // 검증 실패, 블록 폐기
+                            println!("블록 검증 실패: 블록 폐기 - {:?}", block);
+                    
+                            // 서버로 검증 실패 결과 전송
+                            let validation_result = ValidationResult {
+                                is_valid: false, // 검증 실패
+                                node_id: "client_node_id".to_string(),
+                            };
+                            let server_url = "http://143.248.196.38:3000";
+                            let future = async move {
+                                network::submit_validation_result(server_url, &validation_result)
+                                    .await
+                                    .map_err(|e| e.to_string())
+                            };
+                    
+                            return Command::perform(future, Message::SubmitValidationFinished);
+                        } else {
+                            println!("검증할 블록이 없습니다!");
+                        }
+                        Command::none()
+                    }
+                    
 
         // --------------------------------------
         // 1) WebSocket 수신: 서버가 새 블록을 전달
         // --------------------------------------
-                    // 서버 메시지 처리: Block
-                    Message::ServerMessage(netServerMessage::Block(block)) => {
-                        println!("서버에서 블록을 수신하였습니다: {:?}", block);
-                        self.proposed_block = Some(block.clone());
-        
-                        // 블록 검증 및 제출
-                        let validation_result = ValidationResult {
-                            is_valid: self.verify_block(&block),
-                            node_id: "client_node_id".to_string(),
-                        };
-        
-                        let future = async move {
-                            let server_url = "http://143.248.196.38:3000";
-                            network::submit_validation_result(server_url, &validation_result)
-                                .await
-                                .map_err(|e| e.to_string())
-                        };
-        
-                        Command::perform(future, Message::SubmitValidationFinished)
-                    }
+            // 서버 메시지 처리: Block
+            Message::ServerMessage(netServerMessage::Block(block)) => {
+                println!("서버에서 블록 수신: {:?}", block);
+                self.proposed_block = Some((block.clone(), false)); // 검증 대기 상태로 저장
+                Command::none()
+            }
+            
             
         // ---------------------------------------------------------
         // 2) 거래 전송: 굳이 &self 메서드를 직접 async로 안 쓰는 방식
@@ -637,3 +624,4 @@ impl Application for BlockchainClientGUI {
 fn main() -> iced::Result {
     BlockchainClientGUI::run(Settings::default())
 }
+

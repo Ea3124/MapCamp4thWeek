@@ -7,8 +7,7 @@ use axum::{
     http::StatusCode,
 };
 use std::sync::Arc;
-use tokio::sync::{broadcast::Sender as BroadcastSender,broadcast::Receiver as BroadcastReceiver, mpsc::Sender as MpscSender, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast::Sender as BroadcastSender, broadcast::Receiver as BroadcastReceiver, mpsc::Sender as MpscSender, Mutex};
 use serde_json::json;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -45,7 +44,6 @@ fn generate_random_magic_square() -> Vec<Vec<u32>> {
     cols
 }
 
-
 /// 특정 개수의 값을 0으로 비우는 마방진 생성
 fn generate_incomplete_magic_square(num_blank: usize) -> Vec<Vec<u32>> {
     let mut magic_square = generate_random_magic_square();
@@ -71,7 +69,7 @@ pub async fn broadcast_problem(
     Extension(tx): Extension<Arc<BroadcastSender<Problem>>>,
 ){
     // 랜덤 마방진 생성 및 값 비우기
-    let matrix = generate_incomplete_magic_square(4); // 5개의 빈 칸 생성
+    let matrix = generate_incomplete_magic_square(4); // 4개의 빈 칸 생성
 
     // Problem 생성
     let problem = Problem { matrix };
@@ -94,7 +92,7 @@ pub async fn broadcast_problem(
 pub async fn handle_block_submission(
     Json(block): Json<Block>,
     Extension(tx): Extension<Arc<BroadcastSender<String>>>, // 직렬화된 JSON 문자열을 보냄
-    Extension(_validation_sender): Extension<MpscSender<ValidationResult>>, // 사용하지 않음
+    // Extension(_validation_sender): Extension<MpscSender<ValidationResult>>, // 사용하지 않음
 ) -> impl IntoResponse {
     println!("Received block in handle_block_submission: {:?}", block);
 
@@ -118,8 +116,6 @@ pub async fn handle_block_submission(
 
     (StatusCode::OK, "Block submitted and broadcasted successfully")
 }
-
-
 
 // =============== 거래(트랜잭션) 핸들러 ===============
 pub async fn handle_transaction(
@@ -156,16 +152,14 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(total_nodes: usize) -> (Self, mpsc::Sender<ValidationResult>) {
-        let (tx, rx) = mpsc::channel::<ValidationResult>(100);
-
-        let server = Server {
+    /// `validation_sender`를 외부에서 전달받아 사용하도록 수정
+    pub fn new(total_nodes: usize, _validation_sender: MpscSender<ValidationResult>) -> Self {
+        Server {
             current_block: None,
             votes: HashMap::new(),
             total_nodes,
             is_transaction_flow: false, // 초기에는 거래모드 아님
-        };
-        (server, tx)
+        }
     }
 
     pub fn set_new_block(&mut self, block: Block) {
@@ -223,12 +217,7 @@ impl Server {
         // 4) 새 문제 브로드캐스트
         let new_problem = Problem {
             // id: rand::thread_rng().gen(),
-            matrix: vec![
-                vec![16, 2, 3, 13],
-                vec![5, 11, 10, 8],
-                vec![9, 7, 6, 12],
-                vec![4, 14, 15, 1],
-            ],
+            matrix: generate_incomplete_magic_square(4),
         };
         if let Err(e) = problem_tx.send(new_problem) {
             eprintln!("Failed to broadcast new problem after transaction flow: {}", e);
@@ -238,7 +227,6 @@ impl Server {
     }
 }
 
-
 // WebSocket 핸들러 함수
 pub async fn handle_websocket(
     ws: axum::extract::ws::WebSocketUpgrade,
@@ -247,9 +235,6 @@ pub async fn handle_websocket(
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, problem_tx, block_tx))
 }
-
-
-
 
 async fn handle_socket(
     mut socket: WebSocket,

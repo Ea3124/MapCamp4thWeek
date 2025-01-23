@@ -30,7 +30,7 @@ impl From<BlueContainer> for iced::theme::Container {
 
 pub fn view_block_verification<'a>(
     last_block: Option<&'a Block>,
-    server_block: Option<&'a Block>,
+    server_block: Option<&'a (Block, bool)>,
 ) -> Element<'a, Message> {
     // Local Last Block 섹션: 제목과 정보 (1번 코드 형식 적용)
     let local_section = {
@@ -80,18 +80,24 @@ pub fn view_block_verification<'a>(
     let server_section: Element<Message> = {
         let title = text("Proposed Block from Server").size(20);
         
-        if let Some(block) = server_block {
+        if let Some((block, is_verified)) = server_block {
             // 첫 번째 행: Timestamp, Node ID
             let top_row = Row::new()
                 .spacing(10)
                 .push(text(format!("Timestamp: {}", block.timestamp)))
-                .push(text(format!("Node ID: {}", block.node_id)));
+                .push(text(format!("Node ID: {}", block.node_id)))
+                .push(text(format!(
+                    "Verification Status: {}",
+                    if *is_verified { "Verified" } else { "Pending" }
+                )));
+        
             // 두 번째 행: Problem, Solution, Prev_Solution
             let middle_row = Row::new()
                 .spacing(10)
                 .push(text(format!("Problem: {:?}", block.problem)))
                 .push(text(format!("Solution: {:?}", block.solution)))
                 .push(text(format!("Prev_Solution: {:?}", block.prev_solution)));
+        
             // 세 번째 행: Data
             let bottom_row = Row::new()
                 .spacing(10)

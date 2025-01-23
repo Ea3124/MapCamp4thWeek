@@ -36,15 +36,12 @@ async fn main() {
     // ------------------------------------
     // 4) 서버(합의/거래 흐름 관리) 구조체 생성
     // ------------------------------------
-    let (server, validation_sender) = handlers::my_broadcast::Server::new(100);
-    // 여러 곳에서 동시에 접근할 수 있도록 Arc<Mutex<Server>> 래핑
+    let server = handlers::my_broadcast::Server::new(100, validation_tx.clone());
     let server = Arc::new(Mutex::new(server));
 
     // ----------------------------
     // 5) 검증 결과를 처리하는 태스크
     // ----------------------------
-    // - consensus 확인
-    // - 블록 승인 시 30초 거래 모드 진입, 이후 문제 브로드캐스트
     let server_clone_for_validation = Arc::clone(&server);
     let problem_tx_for_validation = Arc::clone(&problem_tx);
     task::spawn(async move {
@@ -57,7 +54,7 @@ async fn main() {
     let app: Router = routes::create_routes(
         Arc::clone(&block_tx),
         Arc::clone(&problem_tx),
-        validation_sender,
+        validation_tx.clone(), // 동일한 validation_tx를 전달
         Arc::clone(&server),
     )
     // 동시 30개 요청 처리 제한
@@ -91,4 +88,5 @@ async fn handle_validation_results(
         let mut server_guard = server.lock().await;
         server_guard.process_consensus(validation_result, Arc::clone(&problem_tx)).await;
     }
+    eprintln!("Validation receiver dropped");
 }

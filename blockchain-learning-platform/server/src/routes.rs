@@ -42,7 +42,7 @@ pub fn create_routes(
                     my_broadcast::handle_block_submission(
                         Json(block),
                         Extension(Arc::clone(&tx)),
-                        Extension(validation_sender.clone()),
+                        // Extension(validation_sender.clone()), // 사용하지 않으므로 제거
                     )
                     .await;
                     "Block submitted"
@@ -67,6 +67,7 @@ pub fn create_routes(
         )
 
         // ** 검증 결과 제출 경로 추가 **
+        // 검증 결과 제출 경로 추가
         .route(
             "/submit_validation",
             post({
