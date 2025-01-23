@@ -88,6 +88,8 @@ struct BlockchainClientGUI {
     // 트랜잭션 관련
     transactions: Vec<Transaction>,
     tx_db: TransactionDB,
+    // 서버에서 받은 현재 문제
+    current_problem: Option<Problem>,
 }
 
 impl BlockchainClientGUI {
@@ -124,31 +126,12 @@ impl BlockchainClientGUI {
             // 바뀐 부분
             server_msg_receiver: Some(rx_arc),
             proposed_block: None,
+            current_problem: None, // 현재 문제 초기화
             transactions,
             tx_db,
         };
         (gui, tx)
     }
-
-    // pub async fn process_server_messages(&mut self) {
-    //     if let Some(receiver) = &mut self.server_msg_receiver {
-    //         while let Some(message) = receiver.recv().await {
-    //             match message {
-    //                 netServerMessage::Block(block) => {
-    //                     println!("Received Block: {:?}", block);
-    //                     // 수신한 Block을 처리
-    //                     self.blocks.push(block);
-    //                 }
-    //                 netServerMessage::Problem(problem) => {
-    //                     println!("Received Problem: {:?}", problem);
-    //                     // Problem 처리 로직 (필요 시 추가)
-    //                 }
-    //             }
-    //         }
-    //     } else {
-    //         eprintln!("server_msg_receiver is None. Cannot process server messages.");
-    //     }
-    // }
 
     /// 임의의 블록 추가
     fn add_random_block(&mut self) {
@@ -584,6 +567,9 @@ impl Application for BlockchainClientGUI {
         Message::ServerMessage(netServerMessage::Problem(problem)) => {
             println!("Received Problem: {:?}", problem);
             // Problem 처리 로직 추가
+
+            self.current_problem = Some(problem.clone()); // 수신한 문제를 state에 저장
+
             Command::none()
         }
         Message::ReceivedProposedBlock(server_message) => todo!(),
@@ -601,7 +587,7 @@ impl Application for BlockchainClientGUI {
             )
             .push(
                 1,
-                TabLabel::Text("로컬 체인 정보 & 거래 내역".to_owned()),
+                TabLabel::Text("내 정보".to_owned()),
                 view_chain_info(&self.blocks, &self.transactions),
             )
             .push(
