@@ -12,7 +12,7 @@ use serde_json::json;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-use crate::models::{Block, Problem, ServerMessage, Transaction, ValidationResult};
+use crate::models::{self, Block, Problem, ServerMessage, Transaction, ValidationResult};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -91,56 +91,46 @@ pub async fn broadcast_problem(
 // =============== 블록 제출 & 검증 요청 ===============
 pub async fn handle_block_submission(
     Json(block): Json<Block>,
-    Extension(tx): Extension<Arc<BroadcastSender<String>>>, // 직렬화된 JSON 문자열을 보냄
-    // Extension(_validation_sender): Extension<MpscSender<ValidationResult>>, // 사용하지 않음
+    Extension(tx): Extension<Arc<BroadcastSender<String>>>, 
+    Extension(server): Extension<Arc<Mutex<Server>>>,
 ) -> impl IntoResponse {
     println!("Received block in handle_block_submission: {:?}", block);
 
-    // ServerMessage로 감싸기
-    let message = ServerMessage::Block(block.clone());
+    {
+        // ================
+        // 1) 서버 잠금
+        // ================
+        let mut guard = server.lock().await;
 
-    // JSON 문자열로 직렬화
-    match serde_json::to_string(&message) {
-        Ok(serialized_message) => {
-            // 브로드캐스트
-            if let Err(e) = tx.send(serialized_message) {
-                eprintln!("Failed to broadcast block: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to broadcast block");
-            }
+        // ================
+        // 2) 이미 블록이 있나?
+        // ================
+        if guard.current_block.is_some() {
+            // *에러 발생시키지 않음*
+            // 대신 "이미 제출됨" 이라는 문구와 함께 200 OK
+            println!("A block was already submitted. Ignoring new block.");
+            return (StatusCode::OK, "Block already submitted. Ignoring new block.");
         }
-        Err(e) => {
-            eprintln!("Failed to serialize message: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to serialize message");
-        }
+
+        // ================
+        // 3) 없다면 세팅
+        // ================
+        guard.set_new_block(block.clone());
+    }
+
+    // ================
+    // 4) 브로드캐스트
+    // ================
+    let message = ServerMessage::Block(block);
+    let serialized_message = serde_json::to_string(&message).unwrap();
+
+    if let Err(e) = tx.send(serialized_message) {
+        eprintln!("Failed to broadcast block: {}", e);
+        // "절대 오류를 일으키지 마라" → 상태코드 200 + 로그만 출력
+        return (StatusCode::OK, "Failed to broadcast block, but no error raised.");
     }
 
     (StatusCode::OK, "Block submitted and broadcasted successfully")
-}
-
-// =============== 거래(트랜잭션) 핸들러 ===============
-pub async fn handle_transaction(
-    Json(tx): Json<Transaction>,
-    Extension(server): Extension<Arc<Mutex<Server>>>,
-) -> impl IntoResponse {
-    let mut guard = server.lock().await;
-    if !guard.is_transaction_flow {
-        return (
-            StatusCode::BAD_REQUEST, 
-            "Currently not in transaction flow. Please wait for next transaction window."
-        );
-    }
-
-    // 실제로는 여기서 sender 잔액 확인, receiver 업데이트 등이 필요
-    // 일단 간단하게 로그만
-    println!(
-        "Transaction received: {} -> {} (amount: {})",
-        tx.sender_id, tx.receiver_id, tx.amount
-    );
-
-    // 필요한 로직(예: balances) 추가 가능
-    // guard.balances.entry(tx.sender_id).and_modify(...).etc
-
-    (StatusCode::OK, "Transaction accepted")
 }
 
 // =============== 서버(합의/거래 흐름) 구조체 ===============
@@ -148,7 +138,7 @@ pub struct Server {
     current_block: Option<Block>,
     votes: HashMap<String /* node_id */, bool>,
     total_nodes: usize,
-    pub is_transaction_flow: bool, // 거래창이 열려 있는지 여부
+    is_problem_solved: bool, // 문제 해결 상태 추가
 }
 
 impl Server {
@@ -158,73 +148,78 @@ impl Server {
             current_block: None,
             votes: HashMap::new(),
             total_nodes,
-            is_transaction_flow: false, // 초기에는 거래모드 아님
+            is_problem_solved: false, // 초기 상태 설정
         }
     }
 
-    pub fn set_new_block(&mut self, block: Block) {
+     // 문제를 설정할 때 상태도 초기화
+     pub fn set_new_block(&mut self, block: Block) {
         self.current_block = Some(block);
         self.votes.clear();
+        self.is_problem_solved = false; // 새 문제이므로 상태 초기화
     }
 
     pub fn add_vote(&mut self, node_id: String, is_valid: bool) {
         self.votes.insert(node_id, is_valid);
     }
 
+    // pub fn check_consensus(&self) -> bool {
+    //     let valid_count = self.votes.values().filter(|&&v| v).count();
+    //     valid_count > self.total_nodes / 2
+    // }
+
+    // pub fn check_consensus(&self) -> bool {
+    //     self.votes.values().any(|&v| v)
+    // }
     pub fn check_consensus(&self) -> bool {
         let valid_count = self.votes.values().filter(|&&v| v).count();
-        valid_count > self.total_nodes / 2
+        valid_count >= 2 // 두 개 이상의 true 투표가 있을 경우
+    }
+
+    /// 문제 해결 상태 업데이트
+    pub fn mark_problem_as_solved(&mut self) {
+        self.is_problem_solved = true;
+    }
+
+    /// 문제 해결 여부 확인
+    pub fn problem_solved(&self) -> bool {
+        self.is_problem_solved
     }
 
     /// 다수결 검증 로직 처리
-    /// 합의 달성 시 -> 30초간 거래 모드 -> 이후 새 문제 브로드캐스트
+    /// 합의 달성 시 과반수 결과를 출력
     pub async fn process_consensus(
         &mut self, 
         validation_result: ValidationResult,
-        problem_tx: Arc<BroadcastSender<Problem>>,
+        problem_tx: Arc<BroadcastSender<Problem>>, // 두 번째 인자 추가
     ) {
         // 1) 투표 기록
         self.add_vote(validation_result.node_id, validation_result.is_valid);
         
         // 2) 다수결 체크
-        if self.check_consensus() {
-            println!("Consensus reached! Block is approved.");
-
-            // ---------------------------
-            //   30초간 거래 모드 실행
-            // ---------------------------
-            self.start_transaction_flow(problem_tx).await;
+        if self.check_consensus() && !self.is_problem_solved {
+            println!("Consensus reached with at least one valid vote.");
+    
+            // 문제 해결 상태 업데이트
+            self.mark_problem_as_solved();
+    
+            // 새 문제 브로드캐스트
+            let new_matrix = generate_incomplete_magic_square(4);
+            let new_problem = Problem { matrix: new_matrix };
+            if let Err(e) = problem_tx.send(new_problem.clone()) {
+                eprintln!("Failed to broadcast new problem after consensus: {}", e);
+            } else {
+                println!("New problem broadcasted after consensus.");
+            }
+    
+            // 서버 상태 초기화: current_block을 None으로 설정
+            self.current_block = None;
+            println!("Server state reset. Ready to accept new block submissions.");
         } else {
-            println!("Still waiting for more votes...");
+            println!("No consensus reached or problem already solved. Current votes: {:?}", self.votes);
         }
     }
-
-    /// 실제로 30초간 거래 플로우를 활성화하고,
-    /// 이후 종료 시 새 문제를 브로드캐스트
-    async fn start_transaction_flow(&mut self, problem_tx: Arc<BroadcastSender<Problem>>) {
-        // 1) 거래 창 오픈
-        self.is_transaction_flow = true;
-        println!("=== Transaction flow started for 30 seconds ===");
-
-        // 2) 30초 기다림 (비동기로 잠깐 락을 풀고 싶다면, 여기서는 별도 스코프 사용 가능)
-        //    여기서는 간단히 본 함수에서 sleep
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        
-        // 3) 거래 창 닫기
-        self.is_transaction_flow = false;
-        println!("=== Transaction flow ended ===");
-
-        // 4) 새 문제 브로드캐스트
-        let new_problem = Problem {
-            // id: rand::thread_rng().gen(),
-            matrix: generate_incomplete_magic_square(4),
-        };
-        if let Err(e) = problem_tx.send(new_problem) {
-            eprintln!("Failed to broadcast new problem after transaction flow: {}", e);
-        } else {
-            println!("A new problem has been broadcast after transaction flow.");
-        }
-    }
+    
 }
 
 // WebSocket 핸들러 함수
