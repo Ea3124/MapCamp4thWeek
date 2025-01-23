@@ -1,5 +1,5 @@
 use iced::{
-    alignment::{Alignment,Horizontal},
+    alignment::{Alignment, Horizontal},
     widget::{Button, container, text, Column, Row, Container},
     Element, Length, Color, Border, Shadow, Theme,
 };
@@ -28,109 +28,121 @@ impl From<BlueContainer> for iced::theme::Container {
     }
 }
 
+/// 블록 검증 뷰: 로컬 블록과 서버에서 제안된 블록을 표시
 pub fn view_block_verification<'a>(
     last_block: Option<&'a Block>,
     server_block: Option<&'a (Block, bool)>,
 ) -> Element<'a, Message> {
-    // Local Last Block 섹션: 제목과 정보 (1번 코드 형식 적용)
+    // Helper function to create a styled block container
+    fn create_block_container<'a>(block_info: Column<'a, Message>) -> Container<'a, Message> {
+        Container::new(block_info)
+            .padding(10)
+            .width(Length::Fill)
+            .style(BlueContainer)
+    }
+
+    // Helper function to format a matrix as a Column of text
+    fn format_matrix(matrix: &Vec<Vec<u32>>) -> Column<'_, Message> {
+        matrix.iter().fold(Column::new().spacing(5), |col, row| {
+            let row_text = row.iter().map(|val| format!("{}", val)).collect::<Vec<_>>().join(", ");
+            col.push(text(row_text))
+        })
+    }
+
+    // Function to build block information similar to chain_info.rs
+    fn build_block_info<'a>(block: &'a Block) -> Column<'a, Message> {
+        // Timestamp and Node ID
+        let timestamp_node_row = Row::new()
+            .spacing(10)
+            .push(text(format!("Timestamp: {}", block.timestamp)))
+            .push(text(format!("Node ID: {}", block.node_id)));
+
+        // Problem section
+        let problem_section = Column::new()
+            .spacing(10)
+            .push(text("Problem:").size(16))
+            .push(format_matrix(&block.problem.matrix));
+
+        // Solution section
+        let solution_section = Column::new()
+            .spacing(10)
+            .push(text("Solution:").size(16))
+            .push(format_matrix(&block.solution));
+
+        // Prev_Solution section
+        let prev_solution_section = Column::new()
+            .spacing(10)
+            .push(text("Prev_Solution:").size(16))
+            .push(format_matrix(&block.prev_solution));
+
+        // Main section with Problem, Solution, Prev_Solution
+        let main_section = Row::new()
+            .spacing(20)
+            .push(problem_section)
+            .push(solution_section)
+            .push(prev_solution_section);
+
+        // Data row
+        let data_row = Row::new().push(text(format!("Data: {}", block.data)));
+
+        // Combine all sections into a single column
+        Column::new()
+            .spacing(10)
+            .push(timestamp_node_row)
+            .push(main_section)
+            .push(data_row)
+    }
+
+    // Local Last Block Section
     let local_section = {
-        let title = text("Local Last Block").size(20);
+        let title = text("Last Local Block").size(20);
         let content = if let Some(block) = last_block {
-            // 첫 번째 행: Timestamp, Node ID (Index는 생략; 필요 시 추가 가능)
-            let top_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Timestamp: {}", block.timestamp)))
-                .push(text(format!("Node ID: {}", block.node_id)));
-            // 두 번째 행: Problem, Solution, Prev_Solution
-            let middle_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Problem: {:?}", block.problem)))
-                .push(text(format!("Solution: {:?}", block.solution)))
-                .push(text(format!("Prev_Solution: {:?}", block.prev_solution)));
-            // 세 번째 행: Data
-            let bottom_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Data: {}", block.data)));
-            // 세 행을 Column으로 묶기
-            Column::new()
-                .spacing(5)
-                .push(top_row)
-                .push(middle_row)
-                .push(bottom_row)
+            build_block_info(block)
         } else {
             Column::new().push(text("There are no local blocks"))
         };
-        
+
         Container::new(
             Column::new()
                 .spacing(10)
                 .push(title)
-                .push(
-                    Container::new(content)
-                        .padding(10)
-                        .width(Length::Fill)
-                        .style(BlueContainer)
-                )
+                .push(create_block_container(content))
         )
         .padding(10)
-        .width(Length::Fill)
+        .width(Length::FillPortion(1))
     };
 
-    // Proposed Block from Server 섹션: 제목, 정보 및 버튼 (1번 코드 형식 적용)
+    // Proposed Block from Server Section
     let server_section: Element<Message> = {
         let title = text("Proposed Block from Server").size(20);
-        
+
         if let Some((block, is_verified)) = server_block {
-            // 첫 번째 행: Timestamp, Node ID
-            let top_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Timestamp: {}", block.timestamp)))
-                .push(text(format!("Node ID: {}", block.node_id)))
+            // Build block info
+            let block_info = build_block_info(block)
                 .push(text(format!(
                     "Verification Status: {}",
                     if *is_verified { "Verified" } else { "Pending" }
                 )));
-        
-            // 두 번째 행: Problem, Solution, Prev_Solution
-            let middle_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Problem: {:?}", block.problem)))
-                .push(text(format!("Solution: {:?}", block.solution)))
-                .push(text(format!("Prev_Solution: {:?}", block.prev_solution)));
-        
-            // 세 번째 행: Data
-            let bottom_row = Row::new()
-                .spacing(10)
-                .push(text(format!("Data: {}", block.data)));
-            // 블록 정보를 묶은 컬럼
-            let server_info = Column::new()
-                .spacing(5)
-                .push(top_row)
-                .push(middle_row)
-                .push(bottom_row);
-            
+
+            // Buttons for verification
             let buttons = Row::new()
                 .spacing(20)
                 .align_items(Alignment::Center)
                 .push(
-                    Button::new(text("pass"))
+                    Button::new(text("Accept"))
                         .padding(10)
                         .on_press(Message::VerifyBlock),
                 )
                 .push(
-                    Button::new(text("fail"))
+                    Button::new(text("Reject"))
                         .padding(10)
                         .on_press(Message::RejectBlock),
                 );
 
+            // Combine block info and buttons
             let content = Column::new()
                 .spacing(20)
-                .push(
-                    Container::new(server_info)
-                        .padding(10)
-                        .width(Length::Fill)
-                        .style(BlueContainer),
-                )
+                .push(create_block_container(block_info))
                 .push(
                     Container::new(buttons)
                         .width(Length::Fill)
@@ -144,7 +156,7 @@ pub fn view_block_verification<'a>(
                     .push(content)
             )
             .padding(10)
-            .width(Length::Fill)
+            .width(Length::FillPortion(1))
             .into()
         } else {
             Container::new(
@@ -159,17 +171,18 @@ pub fn view_block_verification<'a>(
                     )
             )
             .padding(10)
-            .width(Length::Fill)
+            .width(Length::FillPortion(1))
             .into()
         }
     };
 
-    // Local과 Server 섹션을 가로로 배치
+    // Arrange Local and Server sections side by side
     let content = Row::new()
         .spacing(20)
         .push(local_section)
         .push(server_section);
 
+    // Wrap the content in a container with padding
     container(content)
         .width(Length::Fill)
         .height(Length::Fill)

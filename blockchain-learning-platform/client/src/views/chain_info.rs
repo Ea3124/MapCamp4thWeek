@@ -5,7 +5,6 @@ use iced::{
 };
 use crate::Message;
 use crate::blockchain::blockchain_db::Block;
-use crate::transaction::transaction::Transaction;
 
 /// 사용자 정의 스타일: 파란색 컨테이너
 struct BlueContainer;
@@ -31,7 +30,8 @@ impl From<BlueContainer> for iced::theme::Container {
 /// 블록과 거래내역(트랜잭션)을 함께 표시하는 뷰
 pub fn view_chain_info<'a>(
     blocks: &'a [Block],
-    transactions: &'a [Transaction],
+    node_id: &str,
+    balance: u64
 ) -> Element<'a, Message> {
     let blocks_scrollable = Scrollable::new(
         blocks.iter().fold(Column::new().spacing(10), |col, block| {
@@ -121,44 +121,25 @@ pub fn view_chain_info<'a>(
                 .push(button("Add Random Block").padding(10).on_press(Message::AddRandomBlock)),
         );
 
-    let tx_scrollable = Scrollable::new(
-        transactions.iter().fold(Column::new().spacing(10), |col, tx| {
-            let tx_row = Row::new()
+    let node_info_section = Column::new()
+    .spacing(10)
+    .push(text("Node Info").size(20))
+    .push(
+        Container::new(
+            Column::new()
                 .spacing(10)
-                .push(text(format!("TxIndex: {}", tx.index)))
-                .push(text(format!("Sender: {}", tx.sender)))
-                .push(text(format!("Receiver: {}", tx.receiver)))
-                .push(text(format!("Payment: {}", tx.payment)));
-
-            let framed_tx = Container::new(tx_row)
-                .padding(10)
-                .width(Length::Fill);
-
-            col.push(framed_tx)
-        })
-    )
-    .height(Length::FillPortion(9));
-
-    let tx_section = Column::new()
-        .spacing(10)
-        .push(text("Transaction Memory").size(20))
-        .push(
-            Container::new(tx_scrollable)
-                .padding(10)
-                .width(Length::Fill)
-                .height(Length::Fill),
+                .push(text(format!("NodeID: {}", node_id)))
+                .push(text(format!("Balance: {}", balance)))
         )
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(button("Reset TX DB").padding(10).on_press(Message::ResetTxDB))
-                .push(button("Add Random TX").padding(10).on_press(Message::AddRandomTransaction)),
-        );
+        .padding(10)
+        .width(Length::Fill)
+        .style(BlueContainer)
+    );
 
     let info_row = Row::new()
         .spacing(20)
         .push(Container::new(blocks_section).width(Length::FillPortion(1)))
-        .push(Container::new(tx_section).width(Length::FillPortion(1)));
+        .push(Container::new(node_info_section).width(Length::FillPortion(1)));
 
     let content = Column::new()
         .padding(20)

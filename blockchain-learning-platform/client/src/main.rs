@@ -4,7 +4,6 @@
 mod views;
 mod blockchain;
 mod network;
-mod transaction;
 
 use blockchain::blockchain_db::Problem;
 use tokio::sync::mpsc::unbounded_channel;
@@ -13,7 +12,6 @@ use views::chain_info::view_chain_info;
 use views::block_verification::view_block_verification;
 
 use blockchain::blockchain_db::{Block, BlockChainDB};
-use transaction::transaction::{Transaction, TransactionDB};
 
 // ------------------------------
 // iced 관련 import 정리
@@ -31,6 +29,7 @@ use iced::{
 
 use iced_aw::{TabLabel, Tabs};
 use rand::{Rng, thread_rng};
+use chrono::{DateTime, TimeZone, Utc, FixedOffset};
 
 // 추가: network 모듈 관련 임포트
 use crate::network::ServerMessage as netServerMessage;
@@ -61,11 +60,6 @@ enum Message {
     RejectBlock,      // 서버 블록을 무시(검증 실패)
 
     ReceivedProposedBlock(Option<netServerMessage>),
-
-    // --- 트랜잭션 관련 ---
-    AddRandomTransaction, // 트랜잭션 추가
-    ResetTxDB,           // 트랜잭션 DB 초기화
-
     // 거래 관련 메시지
     TransactionSubmit(String, String, u32), // (sender, receiver, amount)// ***
     TransactionFinished(Result<(), String>),// ***
@@ -85,16 +79,16 @@ struct BlockchainClientGUI {
     server_msg_receiver: Option<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<netServerMessage>>>>,
     // /// (가정) 서버에서 받은 블록(하드코딩)
     proposed_block: Option<(Block, bool)>,
-    // 트랜잭션 관련
-    transactions: Vec<Transaction>,
-    tx_db: TransactionDB,
     // 서버에서 받은 현재 문제
     current_problem: Option<Problem>,
+    // 내 정보
+    my_node_id: String,
+    my_balance: u64, 
 }
 
 impl BlockchainClientGUI {
     // fn new(db_path: &str) -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) { //*** 
-    fn new(db_path: &str, tx_db_path: &str)
+    fn new(db_path: &str)
         -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) {
         let db = BlockChainDB::new(db_path);
 
@@ -106,9 +100,9 @@ impl BlockchainClientGUI {
         // 시작 시 DB에서 기존 블록들을 불러옵니다.
         let blocks = db.load_all_blocks();
 
-        // 트랜잭션 DB
-        let tx_db = TransactionDB::new(tx_db_path);
-        let transactions = tx_db.load_all_transactions();
+        // 내 정보
+        let my_node_id = Self::generate_random_node_id();
+        let my_balance = 0;
 
         // 2) 채널 생성
         let (tx, rx) = unbounded_channel::<netServerMessage>();
@@ -127,10 +121,20 @@ impl BlockchainClientGUI {
             server_msg_receiver: Some(rx_arc),
             proposed_block: None,
             current_problem: None, // 현재 문제 초기화
-            transactions,
-            tx_db,
+            my_node_id,
+            my_balance,
         };
         (gui, tx)
+    }
+
+    fn generate_random_node_id() -> String {
+        let mut rng = thread_rng();
+        let names = ["SangNamJa", "HeeSeungSim", "SeungJaeLee","MadCamp2024W","JunhoKim","JunhoPark"];
+        // 예: A, B, C 중 하나 선택
+        let chosen = names[rng.gen_range(0..names.len())];
+        // 1~999 범위 중 3자리로 포맷
+        let number = rng.gen_range(1..1000);
+        format!("{}{:03}", chosen, number)
     }
 
     /// 임의의 블록 추가
@@ -199,60 +203,12 @@ impl BlockchainClientGUI {
         self.blocks = self.db.load_all_blocks();
     }
 
-    /// 임의의 트랜잭션 추가
-    fn add_random_transaction(&mut self) {
-        let mut rng = thread_rng();
-        let sender = format!("Sender{}", rng.gen_range(1..1000));
-        let receiver = format!("Receiver{}", rng.gen_range(1..1000));
-        let payment = rng.gen_range(1..5000) as u64;
-
-        let latest_index = self.tx_db.load_latest_index().unwrap_or(0);
-
-        let new_tx = Transaction::new(
-            latest_index + 1,
-            sender,
-            receiver,
-            payment
-        );
-
-        self.tx_db.save_transaction(&new_tx);
-        self.tx_db.save_latest_index(new_tx.index);
-
-        self.transactions = self.tx_db.load_all_transactions();
-
-        println!("Random transaction added: {:?}", new_tx);
-    }
-
-    /// 트랜잭션 DB 초기화
-    fn reset_tx_db(&mut self) {
-        self.tx_db.reset_db();
-        self.transactions = self.tx_db.load_all_transactions();
-        println!("Transaction DB has been reset!");
-    }
-
-    /// 거래를 서버에 제출하는 함수
-    async fn submit_transaction(&self, sender_id: String, receiver_id: String, amount: u32) -> Result<(), String> {
-        let transaction = network::Transaction {
-            sender_id,
-            receiver_id,
-            amount,
-        };
-
-        // 서버 URL은 실제 서버 주소로 변경
-        let server_url = "http://143.248.196.38:3000";
-
-        if let Err(e) = network::submit_transaction(server_url, &transaction).await {
-            Err(format!("Failed to submit transaction: {}", e))
-        } else {
-            Ok(())
-        }
-    }
 }
 
 // Default 구현 (Application 초기화 등에 사용)
 impl Default for BlockchainClientGUI {
     fn default() -> Self {
-        let (state, _tx) = BlockchainClientGUI::new("blockchain_db", "transaction_db");
+        let (state, _tx) = BlockchainClientGUI::new("blockchain_db");
         state
     }
 }
@@ -274,7 +230,7 @@ impl Application for BlockchainClientGUI {
     type Flags = ();
 
     fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        let (mut state, tx) = BlockchainClientGUI::new("blockchain_db","transaction");
+        let (mut state, tx) = BlockchainClientGUI::new("blockchain_db");
 
         // WebSocket 연결을 비동기로 시작
         let server_url = "http://143.248.196.38:3000"; // 실제 서버 주소로 변경
@@ -290,7 +246,7 @@ impl Application for BlockchainClientGUI {
 
     // 윈도우 타이틀 설정
     fn title(&self) -> String {
-        String::from("블록체인 클라이언트")
+        String::from("상남자특 Rust로 블록체인 배움")
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -340,31 +296,44 @@ impl Application for BlockchainClientGUI {
                     })
                     .collect::<Vec<Vec<u32>>>();
 
-                let example_problem = Problem {
-                    matrix: vec![
-                        vec![1, 2, 3, 4],
-                        vec![5, 6, 7, 8],
-                        vec![9, 10, 11, 12],
-                        vec![13, 14, 15, 16],
-                    ],
+                let example_problem = self.current_problem.clone().unwrap_or_else(|| {
+                    Problem{matrix: vec![ vec![0;4]; 4 ]}
+                });
+
+                let prev_solution = if let Some(last_block) = self.blocks.last() {
+                    last_block.solution.clone()
+                } else {
+                    // 로컬 체인에 아무 블록이 없으면 빈 Vec
+                    vec![]
                 };
+
+                let my_node_id = self.my_node_id.clone();
+
+                let sys_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs();
+                let datetime: DateTime<Utc> = Utc.timestamp_opt(sys_timestamp as i64, 0)
+                    .single()
+                    .expect("Invalid timestamp");
+
+                // 한국 시간으로 변환 (UTC+9)
+                let kst_offset = FixedOffset::east_opt(9 * 3600)
+                    .expect("Invalid offset");
+                let kst_datetime = datetime.with_timezone(&kst_offset);
+                
+                let timestamp= kst_datetime.format("%Y-%m-%d %H:%M:%S").to_string();
 
                 // 2) 서버로 보낼 BlockForServer 구성 (임시 값들로 예시)
                 use network::BlockForServer;
                 let block_data = BlockForServer {
                     index: 0, // 실제 블록 인덱스로 교체
-                    timestamp: "temp-timestamp".to_string(), // 실제 타임스탬프로 교체
+                    timestamp, 
                     problem: example_problem,
-                    // solution: parsed_solution,
-                    solution: parsed_solution.clone(),    
-                    prev_solution: vec![
-                        vec![1, 2, 3, 13],
-                        vec![5, 11, 10, 8],
-                        vec![9, 7, 6, 12],
-                        vec![4, 14, 15, 1],
-                    ],           
-                    node_id: "client-node-id".to_string(),
-                    data: "data".to_string(),
+                    solution: parsed_solution,    
+                    prev_solution,           
+                    node_id: my_node_id,
+                    data: "10".to_string(),
                 };
 
                 // 3) 비동기 전송 - Command::perform 사용
@@ -443,6 +412,15 @@ impl Application for BlockchainClientGUI {
                             proposed.node_id.clone(),
                             proposed.data.clone()
                         );
+
+                        // [CHANGED CODE] node_id가 자신의 아이디와 같으면 보상
+                    if proposed.node_id == self.my_node_id {
+                        self.my_balance += 10;
+                        println!(
+                            "블록 제출자가 나 자신이므로 보상으로 balance를 10 증가! 현재 잔액: {}",
+                            self.my_balance
+                        );
+                    }
                             
                             // 검증 성공, 블록을 로컬 체인에 추가
                             self.db.save_block(&new_block);
@@ -470,29 +448,29 @@ impl Application for BlockchainClientGUI {
                         Command::none()
                     }
                     
-                    Message::RejectBlock => {
-                        if let Some((block, _)) = self.proposed_block.take() {
-                            // 검증 실패, 블록 폐기
-                            println!("블록 검증 실패: 블록 폐기 - {:?}", block);
-                    
-                            // 서버로 검증 실패 결과 전송
-                            let validation_result = ValidationResult {
-                                is_valid: false, // 검증 실패
-                                node_id: "client_node_id".to_string(),
-                            };
-                            let server_url = "http://143.248.196.38:3000";
-                            let future = async move {
-                                network::submit_validation_result(server_url, &validation_result)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            };
-                    
-                            return Command::perform(future, Message::SubmitValidationFinished);
-                        } else {
-                            println!("검증할 블록이 없습니다!");
-                        }
-                        Command::none()
-                    }
+            Message::RejectBlock => {
+                if let Some((block, _)) = self.proposed_block.take() {
+                    // 검증 실패, 블록 폐기
+                    println!("블록 검증 실패: 블록 폐기 - {:?}", block);
+            
+                    // 서버로 검증 실패 결과 전송
+                    let validation_result = ValidationResult {
+                        is_valid: false, // 검증 실패
+                        node_id: "client_node_id".to_string(),
+                    };
+                    let server_url = "http://143.248.196.38:3000";
+                    let future = async move {
+                        network::submit_validation_result(server_url, &validation_result)
+                            .await
+                            .map_err(|e| e.to_string())
+                    };
+            
+                    return Command::perform(future, Message::SubmitValidationFinished);
+                } else {
+                    println!("검증할 블록이 없습니다!");
+                }
+                Command::none()
+            }
                     
 
         // --------------------------------------
@@ -529,16 +507,6 @@ impl Application for BlockchainClientGUI {
                 return Command::perform(future, Message::TransactionFinished);
             }
 
-            // --- 트랜잭션 관련 --- ***
-            Message::AddRandomTransaction => {
-                self.add_random_transaction();
-                Command::none()
-            }
-            Message::ResetTxDB => {
-                self.reset_tx_db();
-                Command::none()
-            }
-
             Message::NoMoreMessages => {
                 // 채널이 닫힌 뒤에 계속 들어오는 “더미” 메시지
                 // 특별히 할 일이 없다면 그냥 Command::none()
@@ -549,30 +517,30 @@ impl Application for BlockchainClientGUI {
         // ---------------------
         // 3) 검증/트랜잭션 후처리
         // ---------------------
-        Message::SubmitValidationFinished(result) => {
-            match result {
-                Ok(()) => println!("Validation result submitted successfully!"),
-                Err(err_msg) => eprintln!("Error submitting validation result: {}", err_msg),
+            Message::SubmitValidationFinished(result) => {
+                match result {
+                    Ok(()) => println!("Validation result submitted successfully!"),
+                    Err(err_msg) => eprintln!("Error submitting validation result: {}", err_msg),
+                }
+                Command::none()
             }
-            Command::none()
-        }
-        Message::TransactionFinished(result) => {
-            match result {
-                Ok(()) => println!("Transaction completed successfully!"),
-                Err(err_msg) => eprintln!("Error submitting transaction: {}", err_msg),
+            Message::TransactionFinished(result) => {
+                match result {
+                    Ok(()) => println!("Transaction completed successfully!"),
+                    Err(err_msg) => eprintln!("Error submitting transaction: {}", err_msg),
+                }
+                Command::none()
             }
-            Command::none()
-        }
-        // 서버 메시지 처리: Problem
-        Message::ServerMessage(netServerMessage::Problem(problem)) => {
-            println!("Received Problem: {:?}", problem);
-            // Problem 처리 로직 추가
+            // 서버 메시지 처리: Problem
+            Message::ServerMessage(netServerMessage::Problem(problem)) => {
+                println!("Received Problem: {:?}", problem);
+                // Problem 처리 로직 추가
 
-            self.current_problem = Some(problem.clone()); // 수신한 문제를 state에 저장
+                self.current_problem = Some(problem.clone()); // 수신한 문제를 state에 저장
 
-            Command::none()
-        }
-        Message::ReceivedProposedBlock(server_message) => todo!(),
+                Command::none()
+            }
+            Message::ReceivedProposedBlock(server_message) => todo!(),
     }
 }
 
@@ -588,7 +556,7 @@ impl Application for BlockchainClientGUI {
             .push(
                 1,
                 TabLabel::Text("내 정보".to_owned()),
-                view_chain_info(&self.blocks, &self.transactions),
+                view_chain_info(&self.blocks, &self.my_node_id, self.my_balance),
             )
             .push(
                 2,

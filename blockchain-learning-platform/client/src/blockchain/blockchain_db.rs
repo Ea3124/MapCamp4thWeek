@@ -128,19 +128,10 @@ impl BlockChainDB {
         // 일괄 적용
         self.db.write(batch).expect("DB 초기화 실패");
 
-        let example_problem = Problem {
-            matrix: vec![
-                vec![1, 2, 3, 5],
-                vec![5, 6, 7, 8],
-                vec![9, 10, 11, 12],
-                vec![13, 14, 15, 16],
-            ],
-        };
-
         // 2) 제네시스 블록 추가
         let genesis_block = Block::new(
             0,
-            example_problem,
+            Problem{matrix:vec![]},
             vec![],
             vec![],
             "GenesisNode".into(),
