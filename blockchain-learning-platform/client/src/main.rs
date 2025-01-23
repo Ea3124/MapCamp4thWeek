@@ -36,6 +36,12 @@ use rand::{Rng, thread_rng};
 use crate::network::ServerMessage as netServerMessage;
 use crate::network::ValidationResult;
 
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use iced::subscription::unfold;
+use futures::Stream;
+use iced::{Subscription, Event, event::Status};
+
 // 메시지 열거형
 #[derive(Debug, Clone)]
 enum Message {
@@ -63,6 +69,9 @@ enum Message {
     // 거래 관련 메시지
     TransactionSubmit(String, String, u32), // (sender, receiver, amount)// ***
     TransactionFinished(Result<(), String>),// ***
+
+    NoMoreMessages,
+    
 }
 
 // 메인 상태 구조체
@@ -73,7 +82,7 @@ struct BlockchainClientGUI {
     blocks: Vec<Block>,               // 로드된 블록 리스트
     db: BlockChainDB,                 // DB 인스턴스
     // 추가: 서버 메시지를 수신하기 위한 채널
-    server_msg_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<netServerMessage>>,
+    server_msg_receiver: Option<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<netServerMessage>>>>,
     // /// (가정) 서버에서 받은 블록(하드코딩)
     proposed_block: Option<Block>,
     // 트랜잭션 관련
@@ -83,7 +92,8 @@ struct BlockchainClientGUI {
 
 impl BlockchainClientGUI {
     // fn new(db_path: &str) -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) { //*** 
-    fn new(db_path: &str, tx_db_path: &str) -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) {
+    fn new(db_path: &str, tx_db_path: &str)
+        -> (Self, tokio::sync::mpsc::UnboundedSender<netServerMessage>) {
         let db = BlockChainDB::new(db_path);
 
         // DB를 열고 블록이 없는 경우 제네시스 블록 생성
@@ -98,44 +108,47 @@ impl BlockchainClientGUI {
         let tx_db = TransactionDB::new(tx_db_path);
         let transactions = tx_db.load_all_transactions();
 
-        // 채널 생성 (서버 -> 클라이언트 메시지)
-        let (tx, rx) = unbounded_channel();
+        // 2) 채널 생성
+        let (tx, rx) = unbounded_channel::<netServerMessage>();
 
-        (
-            BlockchainClientGUI {
-                active_tab: 0,
-                solution_input: Default::default(),
-                transaction_input: (String::new(), String::new(), String::new()), //***
-                blocks,
-                db,
-                server_msg_receiver: Some(rx),
-                proposed_block: None,
-                transactions,
-                tx_db,
-            },
-            tx, // sender 반환
-        )
+        // 3) Arc<Mutex<...>>로 감싸기
+        let rx_arc = Arc::new(Mutex::new(rx));
+
+        // 4) 구조체 생성
+        let gui = BlockchainClientGUI {
+            active_tab: 0,
+            solution_input: Default::default(),
+            transaction_input: (String::new(), String::new(), String::new()),
+            blocks,
+            db,
+            // 바뀐 부분
+            server_msg_receiver: Some(rx_arc),
+            proposed_block: None,
+            transactions,
+            tx_db,
+        };
+        (gui, tx)
     }
 
-    pub async fn process_server_messages(&mut self) {
-        if let Some(receiver) = &mut self.server_msg_receiver {
-            while let Some(message) = receiver.recv().await {
-                match message {
-                    netServerMessage::Block(block) => {
-                        println!("Received Block: {:?}", block);
-                        // 수신한 Block을 처리
-                        self.blocks.push(block);
-                    }
-                    netServerMessage::Problem(problem) => {
-                        println!("Received Problem: {:?}", problem);
-                        // Problem 처리 로직 (필요 시 추가)
-                    }
-                }
-            }
-        } else {
-            eprintln!("server_msg_receiver is None. Cannot process server messages.");
-        }
-    }
+    // pub async fn process_server_messages(&mut self) {
+    //     if let Some(receiver) = &mut self.server_msg_receiver {
+    //         while let Some(message) = receiver.recv().await {
+    //             match message {
+    //                 netServerMessage::Block(block) => {
+    //                     println!("Received Block: {:?}", block);
+    //                     // 수신한 Block을 처리
+    //                     self.blocks.push(block);
+    //                 }
+    //                 netServerMessage::Problem(problem) => {
+    //                     println!("Received Problem: {:?}", problem);
+    //                     // Problem 처리 로직 (필요 시 추가)
+    //                 }
+    //             }
+    //         }
+    //     } else {
+    //         eprintln!("server_msg_receiver is None. Cannot process server messages.");
+    //     }
+    // }
 
     /// 임의의 블록 추가
     fn add_random_block(&mut self) {
@@ -326,6 +339,29 @@ impl Application for BlockchainClientGUI {
         String::from("블록체인 클라이언트")
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        if let Some(rx_arc) = &self.server_msg_receiver {
+            // (1) Arc::clone
+            let cloned = Arc::clone(rx_arc);
+    
+            unfold("my-sub", cloned, |rx_arc| async move {
+                let mut guard = rx_arc.lock().await;
+                let message = match guard.recv().await {
+                    Some(msg) => Message::ServerMessage(msg),
+                    None => Message::NoMoreMessages,
+                };
+            
+                drop(guard); // 명시적 락 해제
+            
+                (message, rx_arc)
+            })
+            
+        } else {
+            Subscription::none()
+        }
+    }
+    
+
     // 메시지 처리 (상태 업데이트)
     fn update(&mut self, msg: Message) -> Command<Message> {
         match msg {
@@ -366,12 +402,7 @@ impl Application for BlockchainClientGUI {
                     timestamp: "temp-timestamp".to_string(), // 실제 타임스탬프로 교체
                     problem: example_problem,
                     // solution: parsed_solution,
-                    solution: vec![
-                        vec![1, 2, 3, 13],
-                        vec![5, 11, 10, 8],
-                        vec![9, 7, 6, 12],
-                        vec![4, 14, 15, 1],
-                    ],    
+                    solution: parsed_solution.clone(),    
                     prev_solution: vec![
                         vec![1, 2, 3, 13],
                         vec![5, 11, 10, 8],
@@ -433,15 +464,6 @@ impl Application for BlockchainClientGUI {
                 println!("Random block added!");
                 Command::none()
             }
-
-            Message::ServerMessage(netServerMessage::Block(block)) => {
-                println!("서버에서 블록을 수신하였습니다: {:?}", block);
-                // 우선 제안된 블록을 어딘가 저장
-                self.proposed_block = Some(block);
-                
-                // 필요하다면, 즉시 검증 수행 or 별도 로직 추가 가능
-                Command::none()
-            }
             
             Message::VerifyBlock => {
                 // 서버에서 받은 블록이 있는지 확인
@@ -493,34 +515,26 @@ impl Application for BlockchainClientGUI {
         // --------------------------------------
         // 1) WebSocket 수신: 서버가 새 블록을 전달
         // --------------------------------------
-        Message::ServerMessage(netServerMessage::Block(block)) => {
-            // (1) 로컬 DB 저장
-            println!("Received block: {:?}", block);
-            self.db.save_block(&block);
-            self.blocks.push(block.clone());
-
-            // (2) 지금 즉시 '동기' 로직으로 블록 검증 (수명 문제 X)
-            let is_valid = self.verify_block(&block);
-
-            // (3) "검증 결과"만 소유(복사)해 서버 전송을 준비
-            let validation_result = ValidationResult {
-                is_valid,
-                node_id: "client_node_id".to_string(),
-            };
-
-            // (4) `Command::perform(...)`에 넘길 Future는 'static 으로!
-            //     validation_result는 move하여 Future 내부 소유로 만듦
-            let future = async move {
-                let server_url = "http://143.248.196.38:3000";
-                // 서버에 검증 결과 전송
-                network::submit_validation_result(server_url, &validation_result)
-                    .await
-                    .map_err(|e| e.to_string())
-            };
-
-            // (5) 비동기 Future → SubmitValidationFinished
-            return Command::perform(future, Message::SubmitValidationFinished);
-        }
+                    // 서버 메시지 처리: Block
+                    Message::ServerMessage(netServerMessage::Block(block)) => {
+                        println!("서버에서 블록을 수신하였습니다: {:?}", block);
+                        self.proposed_block = Some(block.clone());
+        
+                        // 블록 검증 및 제출
+                        let validation_result = ValidationResult {
+                            is_valid: self.verify_block(&block),
+                            node_id: "client_node_id".to_string(),
+                        };
+        
+                        let future = async move {
+                            let server_url = "http://143.248.196.38:3000";
+                            network::submit_validation_result(server_url, &validation_result)
+                                .await
+                                .map_err(|e| e.to_string())
+                        };
+        
+                        Command::perform(future, Message::SubmitValidationFinished)
+                    }
             
         // ---------------------------------------------------------
         // 2) 거래 전송: 굳이 &self 메서드를 직접 async로 안 쓰는 방식
@@ -555,6 +569,13 @@ impl Application for BlockchainClientGUI {
             Command::none()
         }
 
+        Message::NoMoreMessages => {
+            // 채널이 닫힌 뒤에 계속 들어오는 “더미” 메시지
+            // 특별히 할 일이 없다면 그냥 Command::none()
+            println!("NoMoreMessages: channel is closed. Doing nothing...");
+            Command::none()
+        }
+
         // ---------------------
         // 3) 검증/트랜잭션 후처리
         // ---------------------
@@ -571,8 +592,13 @@ impl Application for BlockchainClientGUI {
                 Err(err_msg) => eprintln!("Error submitting transaction: {}", err_msg),
             }
             Command::none()
-        },
-        Message::ServerMessage(netServerMessage::Problem(_)) => todo!(),
+        }
+        // 서버 메시지 처리: Problem
+        Message::ServerMessage(netServerMessage::Problem(problem)) => {
+            println!("Received Problem: {:?}", problem);
+            // Problem 처리 로직 추가
+            Command::none()
+        }
         Message::ReceivedProposedBlock(server_message) => todo!(),
     }
 }
