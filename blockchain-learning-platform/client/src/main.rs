@@ -127,7 +127,6 @@ impl BlockchainClientGUI {
             server_msg_receiver: Some(rx_arc),
             proposed_block: None,
             current_problem: None, // 현재 문제 초기화
-            current_problem: None, // 현재 문제 초기화
             transactions,
             tx_db,
         };
@@ -588,7 +587,6 @@ impl Application for BlockchainClientGUI {
             )
             .push(
                 1,
-                TabLabel::Text("내 정보".to_owned()),
                 TabLabel::Text("내 정보".to_owned()),
                 view_chain_info(&self.blocks, &self.transactions),
             )
