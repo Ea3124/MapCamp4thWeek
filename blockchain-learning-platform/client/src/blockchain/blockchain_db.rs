@@ -2,6 +2,8 @@
 use rocksdb::{DB, Options};
 use serde::{Serialize, Deserialize};
 use bincode;
+use chrono::{DateTime, TimeZone, Utc, FixedOffset};
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -28,11 +30,20 @@ impl Block {
         node_id: String,
         data: String,
     ) -> Self {
-        let timestamp = std::time::SystemTime::now()
+        let sys_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time went backwards")
-            .as_secs()
-            .to_string();
+            .as_secs();
+        let datetime: DateTime<Utc> = Utc.timestamp_opt(sys_timestamp as i64, 0)
+            .single()
+            .expect("Invalid timestamp");
+
+        // 한국 시간으로 변환 (UTC+9)
+        let kst_offset = FixedOffset::east_opt(9 * 3600)
+            .expect("Invalid offset");
+        let kst_datetime = datetime.with_timezone(&kst_offset);
+        
+        let timestamp= kst_datetime.format("%Y-%m-%d %H:%M:%S").to_string();
 
         Block {
             index,

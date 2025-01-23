@@ -1,32 +1,71 @@
 use iced::{
     alignment::{Alignment, Horizontal, Vertical},
-    widget::{button, column, container, text, text_input, Row},
-    Element, Length,
+    widget::{button, column, container, text, text_input, Row, Container},
+    Element, Length, Border, Shadow, Theme,
 };
 use crate::Message;
 
+/// 사용자 정의 스타일: 테두리
+struct BorderStyle;
+
+impl container::StyleSheet for BorderStyle {
+    type Style = Theme;
+
+    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
+        container::Appearance {
+            text_color: None,              
+            background: None,               
+            border: Border {
+                width: 1.0,                    // Set border width
+                radius: 0.0.into(),                   // Set border radius
+                color: iced::Color::BLACK,     // Set border color
+            },
+            shadow: Shadow::default(),                   
+        }
+    }
+}
+
+impl From<BorderStyle> for iced::theme::Container {
+    fn from(style: BorderStyle) -> Self {
+        iced::theme::Container::Custom(Box::new(style))
+    }
+}
+
+// 뷰함수
 pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI) -> Element<'a, Message> {
-    let problem_grid = vec![
-        vec![16, 2, 3, 13],
-        vec![5, 11, 10, 8],
-        vec![9, 7, 6, 12],
-        vec![4, 14, 15, 1],
-    ];
+    let problem_matrix = if let Some(problem) = &state.current_problem {
+        &problem.matrix
+    } else {
+        // 수신한 문제가 없으면 기존에 쓰던 예시를 사용
+        &vec![
+            vec![0,0,0,0],
+            vec![0,0,0,0],
+            vec![0,0,0,0],
+            vec![0,0,0,0],
+        ]
+    };
 
     let problem_view = column![
         text("4x4 Magic Square Problem").size(24),
         column(
-            problem_grid.into_iter().map(|row| {
+            problem_matrix.iter().map(|row| {
                 Row::with_children(
-                    row.into_iter().map(|num| {
+                    row.iter().map(|&num| {
+                        // 1) num == 0일 때 빈 문자열로 표시
+                        let display_text = if num == 0 {
+                            "".to_string() // 빈 문자열
+                        } else {
+                            num.to_string() // 숫자를 문자열로 변환
+                        };
+
                         container(
-                            text(num.to_string())
+                            text(display_text)
                                 .width(Length::Fill)
                                 .height(Length::Fill)
-                                // align_x -> horizontal_alignment
                                 .horizontal_alignment(Horizontal::Center)
                                 .vertical_alignment(Vertical::Center)
                         )
+                        .style(BorderStyle)
                         .width(Length::Fixed(50.0))
                         .height(Length::Fixed(50.0))
                         .into()
@@ -35,9 +74,10 @@ pub fn view_problem_solving<'a>(state: &'a crate::BlockchainClientGUI) -> Elemen
                 .spacing(10)
                 .into()
             })
-        )
-        .spacing(10),
-    ];
+        ).spacing(10)
+    ]
+    .spacing(20) 
+    .align_items(Alignment::Center);
 
     let solution_inputs = column![
         text("Your Solution").size(24),

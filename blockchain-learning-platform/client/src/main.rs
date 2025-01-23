@@ -83,11 +83,13 @@ struct BlockchainClientGUI {
     db: BlockChainDB,                 // DB 인스턴스
     // 추가: 서버 메시지를 수신하기 위한 채널
     server_msg_receiver: Option<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<netServerMessage>>>>,
-    // /// (가정) 서버에서 받은 블록(하드코딩)
+    // 서버에서 받은 블록
     proposed_block: Option<Block>,
     // 트랜잭션 관련
     transactions: Vec<Transaction>,
     tx_db: TransactionDB,
+    // 서버에서 받은 현재 문제
+    current_problem: Option<Problem>,
 }
 
 impl BlockchainClientGUI {
@@ -124,31 +126,12 @@ impl BlockchainClientGUI {
             // 바뀐 부분
             server_msg_receiver: Some(rx_arc),
             proposed_block: None,
+            current_problem: None, // 현재 문제 초기화
             transactions,
             tx_db,
         };
         (gui, tx)
     }
-
-    // pub async fn process_server_messages(&mut self) {
-    //     if let Some(receiver) = &mut self.server_msg_receiver {
-    //         while let Some(message) = receiver.recv().await {
-    //             match message {
-    //                 netServerMessage::Block(block) => {
-    //                     println!("Received Block: {:?}", block);
-    //                     // 수신한 Block을 처리
-    //                     self.blocks.push(block);
-    //                 }
-    //                 netServerMessage::Problem(problem) => {
-    //                     println!("Received Problem: {:?}", problem);
-    //                     // Problem 처리 로직 (필요 시 추가)
-    //                 }
-    //             }
-    //         }
-    //     } else {
-    //         eprintln!("server_msg_receiver is None. Cannot process server messages.");
-    //     }
-    // }
 
     /// 임의의 블록 추가
     fn add_random_block(&mut self) {
@@ -515,91 +498,93 @@ impl Application for BlockchainClientGUI {
         // --------------------------------------
         // 1) WebSocket 수신: 서버가 새 블록을 전달
         // --------------------------------------
-                    // 서버 메시지 처리: Block
-                    Message::ServerMessage(netServerMessage::Block(block)) => {
-                        println!("서버에서 블록을 수신하였습니다: {:?}", block);
-                        self.proposed_block = Some(block.clone());
-        
-                        // 블록 검증 및 제출
-                        let validation_result = ValidationResult {
-                            is_valid: self.verify_block(&block),
-                            node_id: "client_node_id".to_string(),
-                        };
-        
-                        let future = async move {
-                            let server_url = "http://143.248.196.38:3000";
-                            network::submit_validation_result(server_url, &validation_result)
-                                .await
-                                .map_err(|e| e.to_string())
-                        };
-        
-                        Command::perform(future, Message::SubmitValidationFinished)
-                    }
+        // 서버 메시지 처리: Block
+            Message::ServerMessage(netServerMessage::Block(block)) => {
+                println!("서버에서 블록을 수신하였습니다: {:?}", block);
+                self.proposed_block = Some(block.clone());
+
+                // 블록 검증 및 제출
+                let validation_result = ValidationResult {
+                    is_valid: self.verify_block(&block),
+                    node_id: "client_node_id".to_string(),
+                };
+
+                let future = async move {
+                    let server_url = "http://143.248.196.38:3000";
+                    network::submit_validation_result(server_url, &validation_result)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+
+                Command::perform(future, Message::SubmitValidationFinished)
+            }
             
         // ---------------------------------------------------------
         // 2) 거래 전송: 굳이 &self 메서드를 직접 async로 안 쓰는 방식
         // ---------------------------------------------------------
-        Message::TransactionSubmit(sender, receiver, amount) => {
-            // (1) 거래 데이터 (소유권) 생성
-            let transaction = network::Transaction {
-                sender_id: sender,
-                receiver_id: receiver,
-                amount,
-            };
+            Message::TransactionSubmit(sender, receiver, amount) => {
+                // (1) 거래 데이터 (소유권) 생성
+                let transaction = network::Transaction {
+                    sender_id: sender,
+                    receiver_id: receiver,
+                    amount,
+                };
             // (2) 별도의 동기/검증 로직이 필요하다면, 여기서 self를 사용하고 즉시 끝냄
             //     (예: self.db 잔액 조회)
 
             // (3) 나머지 통신은 'static Future 로
-            let future = async move {
-                let server_url = "http://143.248.196.38:3000";
-                network::submit_transaction(server_url, &transaction)
-                    .await
-                    .map_err(|e| e.to_string())
-            };
-            return Command::perform(future, Message::TransactionFinished);
-        }
-
-        // --- 트랜잭션 관련 --- ***
-        Message::AddRandomTransaction => {
-            self.add_random_transaction();
-            Command::none()
-        }
-        Message::ResetTxDB => {
-            self.reset_tx_db();
-            Command::none()
-        }
-
-        Message::NoMoreMessages => {
-            // 채널이 닫힌 뒤에 계속 들어오는 “더미” 메시지
-            // 특별히 할 일이 없다면 그냥 Command::none()
-            println!("NoMoreMessages: channel is closed. Doing nothing...");
-            Command::none()
-        }
-
-        // ---------------------
-        // 3) 검증/트랜잭션 후처리
-        // ---------------------
-        Message::SubmitValidationFinished(result) => {
-            match result {
-                Ok(()) => println!("Validation result submitted successfully!"),
-                Err(err_msg) => eprintln!("Error submitting validation result: {}", err_msg),
+                let future = async move {
+                    let server_url = "http://143.248.196.38:3000";
+                    network::submit_transaction(server_url, &transaction)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+                return Command::perform(future, Message::TransactionFinished);
             }
-            Command::none()
-        }
-        Message::TransactionFinished(result) => {
-            match result {
-                Ok(()) => println!("Transaction completed successfully!"),
-                Err(err_msg) => eprintln!("Error submitting transaction: {}", err_msg),
+
+            // --- 트랜잭션 관련 --- ***
+            Message::AddRandomTransaction => {
+                self.add_random_transaction();
+                Command::none()
             }
-            Command::none()
-        }
-        // 서버 메시지 처리: Problem
-        Message::ServerMessage(netServerMessage::Problem(problem)) => {
-            println!("Received Problem: {:?}", problem);
-            // Problem 처리 로직 추가
-            Command::none()
-        }
-        Message::ReceivedProposedBlock(server_message) => todo!(),
+            Message::ResetTxDB => {
+                self.reset_tx_db();
+                Command::none()
+            }
+
+            Message::NoMoreMessages => {
+                // 채널이 닫힌 뒤에 계속 들어오는 “더미” 메시지
+                // 특별히 할 일이 없다면 그냥 Command::none()
+                println!("NoMoreMessages: channel is closed. Doing nothing...");
+                Command::none()
+            }
+
+            // ---------------------
+            // 3) 검증/트랜잭션 후처리
+            // ---------------------
+            Message::SubmitValidationFinished(result) => {
+                match result {
+                    Ok(()) => println!("Validation result submitted successfully!"),
+                    Err(err_msg) => eprintln!("Error submitting validation result: {}", err_msg),
+                }
+                Command::none()
+            }
+            Message::TransactionFinished(result) => {
+                match result {
+                    Ok(()) => println!("Transaction completed successfully!"),
+                    Err(err_msg) => eprintln!("Error submitting transaction: {}", err_msg),
+                }
+                Command::none()
+            }
+            // 서버 메시지 처리: Problem
+            Message::ServerMessage(netServerMessage::Problem(problem)) => {
+                println!("Received Problem: {:?}", problem);
+                
+                self.current_problem = Some(problem.clone()); // 수신한 문제를 state에 저장
+
+                Command::none()
+            }
+            Message::ReceivedProposedBlock(server_message) => todo!(),
     }
 }
 
@@ -614,7 +599,7 @@ impl Application for BlockchainClientGUI {
             )
             .push(
                 1,
-                TabLabel::Text("로컬 체인 정보 & 거래 내역".to_owned()),
+                TabLabel::Text("내 정보".to_owned()),
                 view_chain_info(&self.blocks, &self.transactions),
             )
             .push(
