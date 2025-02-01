@@ -4,7 +4,8 @@
 ![Repository Size][repository-size-shield]
 
 <!--프로젝트 대문 이미지-->
-![Project Title](readme_images/rust_logo.png?size=300)
+<img src="readme_images/rust_logo.png" width="300">
+
 
 
 
@@ -149,9 +150,10 @@ cargo run
 
 |Server & Network|Client & GUI|
 |:---:|:---:|
-| ![](https://github.com/Ea3124.png?size=120) | ![](https://github.com/simmath2004.png?size=120) |
+| <img src="https://github.com/Ea3124.png" width="120"> | <img src="https://github.com/simmath2004.png" width="120"> |
 |[이승재](https://github.com/Ea3124)|[심희승](https://github.com/simmath2004)|
 |leesj6717@gmail.com| - |
+
  
 <!--Url for Badges-->
 [license-shield]: https://img.shields.io/github/license/dev-ujin/readme-template?labelColor=D8D8D8&color=04B4AE
