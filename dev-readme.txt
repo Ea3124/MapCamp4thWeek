@@ -9,4 +9,7 @@ docker run --rm -v "$(pwd)/output:/output" client-builder \
 
 server
 
-./run.sh
+./run.sha2
+
+
+exe와 app 배포
