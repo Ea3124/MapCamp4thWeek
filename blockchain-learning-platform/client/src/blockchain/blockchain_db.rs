@@ -66,6 +66,7 @@ impl BlockChainDB {
         let mut options = Options::default();
         options.create_if_missing(true);
         let db = DB::open(&options, db_path).expect("RocksDB 초기화 실패");
+        // let db = BlockChainDB::new("/app/server/data");
         BlockChainDB { db }
     }
 
